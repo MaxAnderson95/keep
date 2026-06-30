@@ -1,0 +1,24 @@
+# Compiled binary / release output
+/keep
+/dist/
+*.exe
+*.test
+*.out
+
+# Go workspace
+/vendor/
+go.work
+go.work.sum
+
+# Coverage
+*.cover
+coverage.*
+profile.out
+
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
