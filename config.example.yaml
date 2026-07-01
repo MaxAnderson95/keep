@@ -1,0 +1,46 @@
+# Example keep Config.
+#
+# Copy to ~/.config/keep/config.yaml (symlinked from ~/dotfiles) and edit.
+# This file is the single source of truth; generated plists are disposable.
+#
+# Env model (no $VAR interpolation):
+#   - env_files: dotenv files keep parses at fork time; uncommitted, may hold secrets.
+#   - env:       literal, non-secret key/values; committed.
+#   precedence (low -> high):
+#     launchd base < global env_files < service env_files < global env < service env
+
+defaults:
+  # env_files:
+  #   - ~/.config/keep/secrets.env   # dotenv; uncommitted; may hold secrets
+  log_dir: ~/Library/Logs/keep       # per-service logs derive from the service name
+  # Opportunistic log rotation (off by default); runs on keep invocations.
+  rotation:
+    enabled: false
+    max_size: 10MB
+    max_age: 7d
+    keep: 3
+
+services:
+  opencode:
+    type: resident                    # resident (default) | scheduled
+    command: ~/.opencode/bin/opencode serve --hostname 127.0.0.1 --port 4096
+    working_dir: ~
+    umask: "077"
+    port: 4096                        # enables the status port-listening check
+
+  openchamber:
+    type: resident
+    command: ~/Library/pnpm/openchamber serve --foreground --host 127.0.0.1 --port 4097
+    port: 4097
+    # env_files:
+    #   - ~/.config/keep/openchamber.env   # secrets (e.g. API_TOKEN); uncommitted
+    env:                              # non-secret literals only
+      OPENCODE_BINARY: ~/.opencode/bin/opencode
+      OPENCODE_PORT: "4096"
+      OPENCODE_SKIP_START: "true"
+
+  opencode-db-backup:
+    type: scheduled
+    command: ~/.local/bin/opencode-db-backup
+    schedule:
+      calendar: { hour: 2, minute: 30 }   # daily 02:30 (alternatively: interval: 6h)
