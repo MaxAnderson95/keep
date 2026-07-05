@@ -44,3 +44,17 @@ services:
     command: ~/.local/bin/opencode-db-backup
     schedule:
       calendar: { hour: 2, minute: 30 }   # daily 02:30 (alternatively: interval: 6h)
+
+  # keep's own web management UI (see docs/prd-web.md). keep manages the
+  # server that manages keep: `keep serve` reads its auth secrets from the
+  # environment — KEEP_SERVE_PASSWORD (browser login; passkeys after that)
+  # and optionally KEEP_SERVE_TOKEN (Authorization: Bearer for scripting) —
+  # so the env_file below must define them. Network exposure (e.g. a
+  # Tailscale Service in front of 127.0.0.1:4098) stays external, per D12.
+  keep-web:
+    type: resident
+    command: ~/.local/bin/keep serve --host 127.0.0.1 --port 4098
+    umask: "077"
+    port: 4098
+    # env_files:
+    #   - ~/.config/keep/keep-web.env   # KEEP_SERVE_PASSWORD=..., KEEP_SERVE_TOKEN=...

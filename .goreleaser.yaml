@@ -5,6 +5,10 @@ project_name: keep
 before:
   hooks:
     - go mod tidy
+    # The SPA must exist in web/dist before the Go build embeds it (W13).
+    # Vite+ (vp) is on PATH in CI via release.yml; the toolchain version is
+    # pinned by web/pnpm-workspace.yaml + the lockfile.
+    - sh -c "cd web && vp install && vp run build"
 
 builds:
   - id: keep

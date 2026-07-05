@@ -22,6 +22,9 @@ boilerplate with a single declarative config and verbs that actually behave:
 - `keep status` / `keep logs` / `keep doctor` — see state (with an optional port-liveness check),
   tail logs, and diagnose problems.
 - bare `keep` — open the TUI.
+- `keep serve` — a phone-first web UI plus a scriptable JSON API (`/api/v1`) over the same
+  verbs, designed to run as a keep service itself and sit behind Tailscale. Password + passkey
+  (WebAuthn) + bearer-token auth. See [docs/prd-web.md](./docs/prd-web.md).
 
 ## Design highlights
 

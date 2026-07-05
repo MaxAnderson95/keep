@@ -62,6 +62,7 @@ func newApp(bi BuildInfo) *cli.App {
 			cmdShow(bi),
 			cmdEdit(bi),
 			cmdDoctor(bi),
+			cmdServe(bi),
 			cmdTUI(bi),
 			cmdVersion(bi),
 			cmdFork(bi), // hidden, launchd-only

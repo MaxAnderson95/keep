@@ -1,0 +1,16 @@
+# Vite+ toolchain pins (W11): vp is v0.x, so upgrades are deliberate — bump
+# these exact versions on purpose, never back to "latest".
+catalog:
+  vite: npm:@voidzero-dev/vite-plus-core@0.2.2
+  vitest: npm:@voidzero-dev/vite-plus-test@0.1.24
+  vite-plus: 0.2.2
+overrides:
+  vite: "catalog:"
+  vitest: "catalog:"
+peerDependencyRules:
+  allowAny:
+    - vite
+    - vitest
+  allowedVersions:
+    vite: "*"
+    vitest: "*"
