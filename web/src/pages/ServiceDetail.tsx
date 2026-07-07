@@ -255,7 +255,14 @@ function LogViewer({ name }: { name: string }) {
     if (paused) return;
     setLines([]);
     const es = new EventSource(logStreamUrl(name));
-    es.onopen = () => setConnected(true);
+    es.onopen = () => {
+      setConnected(true);
+      // EventSource auto-reconnects after a blip, and the server replays the
+      // backlog on every new connection. Reset the buffer on (re)open so the
+      // replay lands in an empty view instead of duplicating lines — it also
+      // covers whatever was missed while disconnected.
+      setLines([]);
+    };
     es.onerror = () => setConnected(false);
     es.onmessage = (ev) => {
       const parsed = JSON.parse(ev.data) as LogLine;
