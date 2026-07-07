@@ -28,6 +28,17 @@ func DefaultLogDir() string {
 	return filepath.Join(home, "Library", "Logs", "keep")
 }
 
+// StateDir is keep's machine-local state directory (never committed anywhere),
+// e.g. the per-service update locks (U8). Serve keeps its own state file here
+// too (W6).
+func StateDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join("Library", "Application Support", "keep")
+	}
+	return filepath.Join(home, "Library", "Application Support", "keep")
+}
+
 // LaunchAgentsDir is the user LaunchAgents directory where generated artifacts live.
 func LaunchAgentsDir() string {
 	home, err := os.UserHomeDir()

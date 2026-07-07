@@ -196,3 +196,87 @@ services:
 		t.Fatal("expected unknown-field error")
 	}
 }
+
+func TestParseUpdateFields(t *testing.T) {
+	cfg := parse(t, `
+services:
+  x:
+    command: /bin/true
+    update:
+      - /usr/local/bin/tool upgrade
+      - "/usr/local/bin/tool verify --level 2"
+    update_timeout: 30m
+`)
+	s := cfg.Services[0]
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if !s.HasUpdate() || len(s.Update) != 2 {
+		t.Fatalf("update = %v", s.Update)
+	}
+	if s.UpdateTimeout != "30m" {
+		t.Fatalf("update_timeout = %q", s.UpdateTimeout)
+	}
+	d, err := s.UpdateTimeoutDuration()
+	if err != nil || d.Minutes() != 30 {
+		t.Fatalf("UpdateTimeoutDuration = %v, %v", d, err)
+	}
+}
+
+func TestUpdateTimeoutDefaultsAndDisable(t *testing.T) {
+	s := &Service{Update: []string{"/bin/true"}}
+	if d, err := s.UpdateTimeoutDuration(); err != nil || d != DefaultUpdateTimeout {
+		t.Fatalf("default = %v, %v; want %v", d, err, DefaultUpdateTimeout)
+	}
+	s.UpdateTimeout = "0"
+	if d, err := s.UpdateTimeoutDuration(); err != nil || d != 0 {
+		t.Fatalf("disabled = %v, %v; want 0", d, err)
+	}
+}
+
+func TestValidateUpdateErrors(t *testing.T) {
+	cases := map[string]string{
+		"unterminated quote": `
+services:
+  x:
+    command: /bin/true
+    update: ["/bin/tool 'oops"]
+`,
+		"empty entry": `
+services:
+  x:
+    command: /bin/true
+    update: ["   "]
+`,
+		"timeout without update": `
+services:
+  x:
+    command: /bin/true
+    update_timeout: 10m
+`,
+		"bad timeout": `
+services:
+  x:
+    command: /bin/true
+    update: ["/bin/true"]
+    update_timeout: banana
+`,
+		"negative timeout": `
+services:
+  x:
+    command: /bin/true
+    update: ["/bin/true"]
+    update_timeout: -5m
+`,
+	}
+	for name, y := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := parse(t, y)
+			if err := cfg.Validate(); err == nil {
+				t.Fatal("expected validation error")
+			} else if !strings.Contains(err.Error(), "update") {
+				t.Fatalf("error not about update: %v", err)
+			}
+		})
+	}
+}

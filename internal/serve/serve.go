@@ -106,6 +106,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/services/{name}/down", s.authed(s.handleVerb("down")))
 	mux.Handle("POST /api/v1/services/{name}/bounce", s.authed(s.handleVerb("bounce")))
 
+	// Update (docs/prd-update.md): detached run, SSE output stream.
+	mux.Handle("POST /api/v1/services/{name}/update", s.authed(s.handleUpdate))
+
 	// Unknown API paths must 404 as JSON, not fall through to the SPA.
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", "no such endpoint")

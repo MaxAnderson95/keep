@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, logStreamUrl, type Resolved, type ServiceStatus, type Verb } from "../api";
+import {
+  api,
+  logStreamUrl,
+  runUpdate,
+  type Resolved,
+  type ServiceStatus,
+  type UpdateDone,
+  type Verb,
+} from "../api";
 import { ConfirmSheet } from "../components/ConfirmSheet";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { HealthBadge } from "../components/HealthBadge";
@@ -13,6 +21,7 @@ export function ServiceDetailPage() {
   const { name = "" } = useParams();
   const { data: svc, error, refresh } = usePoll(() => api.service(name), POLL_MS);
   const meta = useMeta();
+  const update = useUpdateRun(name, refresh);
 
   return (
     <div className="pt-3">
@@ -25,14 +34,61 @@ export function ServiceDetailPage() {
       {svc && (
         <>
           <StatusPanel svc={svc} />
-          <VerbBar svc={svc} selfService={meta?.self_service ?? ""} onDone={refresh} />
+          <VerbBar
+            svc={svc}
+            selfService={meta?.self_service ?? ""}
+            onDone={refresh}
+            updateRunning={update.running}
+            onUpdate={update.start}
+          />
+          <UpdateOutputPanel run={update} />
           <ShowPanel name={name} />
-          <LogViewer name={name} />
+          <LogViewer name={name} hasUpdate={svc.has_update} />
         </>
       )}
       {!svc && !error && <p className="px-4 py-8 text-center text-sm text-dim">Loading…</p>}
     </div>
   );
+}
+
+interface UpdateRun {
+  lines: string[];
+  result: UpdateDone | null;
+  error: string | null;
+  running: boolean;
+  started: boolean;
+  start: () => void;
+}
+
+// useUpdateRun drives one update run's SSE stream. The run itself is
+// detached on the server: losing this stream never cancels the update.
+function useUpdateRun(name: string, onDone: () => void): UpdateRun {
+  const [lines, setLines] = useState<string[]>([]);
+  const [result, setResult] = useState<UpdateDone | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const [started, setStarted] = useState(false);
+
+  const start = () => {
+    setLines([]);
+    setResult(null);
+    setError(null);
+    setStarted(true);
+    setRunning(true);
+    void (async () => {
+      try {
+        const done = await runUpdate(name, (line) => setLines((prev) => [...prev, line]));
+        setResult(done);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setRunning(false);
+        onDone();
+      }
+    })();
+  };
+
+  return { lines, result, error, running, started, start };
 }
 
 function StatusPanel({ svc }: { svc: ServiceStatus }) {
@@ -72,8 +128,10 @@ function Item({ label, value, mono }: { label: string; value: string; mono?: boo
   );
 }
 
+type ActionVerb = Verb | "update";
+
 interface PendingVerb {
-  verb: Verb;
+  verb: ActionVerb;
   title: string;
   message: string;
   danger: boolean;
@@ -83,10 +141,14 @@ function VerbBar({
   svc,
   selfService,
   onDone,
+  updateRunning,
+  onUpdate,
 }: {
   svc: ServiceStatus;
   selfService: string;
   onDone: () => void;
+  updateRunning: boolean;
+  onUpdate: () => void;
 }) {
   const [pending, setPending] = useState<PendingVerb | null>(null);
   const [busy, setBusy] = useState(false);
@@ -95,7 +157,7 @@ function VerbBar({
   const isSelf = selfService !== "" && svc.name === selfService;
   const isTailscaled = svc.name === "tailscaled";
 
-  const confirmFor = (verb: Verb): PendingVerb => {
+  const confirmFor = (verb: ActionVerb): PendingVerb => {
     let message = `Run ${verb} on ${svc.name}?`;
     let danger = false;
     if (verb === "down") {
@@ -115,10 +177,24 @@ function VerbBar({
           "tailscaled carries this connection — the UI may blip while it restarts. This is the usual fix for pending Tailscale services.";
       }
     }
+    if (verb === "update") {
+      message = `Down ${svc.name}, run its declared update commands, and bring it back up when they all succeed. The service is unavailable while the update runs; a failure leaves it held down.`;
+      if (isTailscaled) {
+        message +=
+          "\n\nWARNING: tailscaled carries this connection. Tailscale access to this Mac — including this UI and this output stream — drops while it updates. The run continues on the server either way.";
+        danger = true;
+      }
+    }
     return { verb, title: `${verb} ${svc.name}`, message, danger };
   };
 
-  const run = async (verb: Verb) => {
+  const run = async (verb: ActionVerb) => {
+    if (verb === "update") {
+      setPending(null);
+      setVerbError(null);
+      onUpdate();
+      return;
+    }
     setBusy(true);
     setVerbError(null);
     try {
@@ -144,10 +220,24 @@ function VerbBar({
           disabled={isSelf}
           onClick={() => setPending(confirmFor("down"))}
         />
+        {svc.has_update && (
+          <VerbButton
+            label="Update"
+            disabled={isSelf || svc.updating || updateRunning}
+            onClick={() => setPending(confirmFor("update"))}
+          />
+        )}
       </div>
       {isSelf && (
         <p className="mt-1.5 text-xs text-dim">
-          Down is disabled: this service runs the web UI you are using (use the CLI over SSH).
+          {svc.has_update ? "Down and Update are" : "Down is"} disabled: this service runs the web
+          UI you are using (use the CLI over SSH).
+        </p>
+      )}
+      {!isSelf && svc.updating && !updateRunning && (
+        <p className="mt-1.5 text-xs text-dim">
+          An update is already running (started elsewhere). Watch it via the update log stream
+          below.
         </p>
       )}
       {verbError && <p className="mt-2 text-sm text-red-400">{verbError}</p>}
@@ -162,6 +252,54 @@ function VerbBar({
           onCancel={() => setPending(null)}
         />
       )}
+    </section>
+  );
+}
+
+// UpdateOutputPanel shows a triggered update run: live streamed output while
+// it runs, then an explicit success / failed state (U12).
+function UpdateOutputPanel({ run }: { run: UpdateRun }) {
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "instant", block: "end" });
+  }, [run.lines]);
+
+  if (!run.started) return null;
+
+  let state: { label: string; cls: string };
+  if (run.running) {
+    state = { label: "running…", cls: "text-violet-300" };
+  } else if (run.error) {
+    state = { label: "failed", cls: "text-red-400" };
+  } else if (run.result && run.result.ok) {
+    state = {
+      label: run.result.stayed_held ? "succeeded (stayed down)" : "succeeded",
+      cls: "text-emerald-300",
+    };
+  } else {
+    state = { label: run.result?.timed_out ? "timed out" : "failed", cls: "text-red-400" };
+  }
+
+  return (
+    <section className="mx-4 mt-3 rounded-xl border border-edge bg-panel">
+      <div className="flex items-center justify-between border-b border-edge px-4 py-2">
+        <span className="text-sm font-semibold">Update</span>
+        <span className={`text-xs font-medium ${state.cls}`}>{state.label}</span>
+      </div>
+      <div className="max-h-72 overflow-y-auto overscroll-contain px-3 py-2">
+        {run.lines.length === 0 && (
+          <p className="py-4 text-center text-xs text-dim">Waiting for output…</p>
+        )}
+        <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-4">
+          {run.lines.join("\n")}
+        </pre>
+        {run.error && <p className="mt-2 text-xs text-red-400">{run.error}</p>}
+        {!run.running && run.result?.error && (
+          <p className="mt-2 text-xs text-red-400">{run.result.error}</p>
+        )}
+        <div ref={bottomRef} />
+      </div>
     </section>
   );
 }
@@ -220,6 +358,11 @@ function ShowPanel({ name }: { name: string }) {
           {resolved.working_dir && (
             <p className="mt-1 font-mono text-dim">cwd {resolved.working_dir}</p>
           )}
+          {resolved.update?.map((u, i) => (
+            <p key={i} className="mt-1 break-all font-mono text-dim">
+              update[{i}] {u}
+            </p>
+          ))}
           <table className="mt-2 w-full">
             <tbody>
               {resolved.env.map((e) => (
@@ -239,13 +382,13 @@ function ShowPanel({ name }: { name: string }) {
 const MAX_LOG_LINES = 2000;
 
 interface LogLine {
-  stream: "out" | "err";
+  stream: "out" | "err" | "update";
   line: string;
 }
 
-function LogViewer({ name }: { name: string }) {
+function LogViewer({ name, hasUpdate }: { name: string; hasUpdate: boolean }) {
   const [lines, setLines] = useState<LogLine[]>([]);
-  const [filter, setFilter] = useState<"all" | "out" | "err">("all");
+  const [filter, setFilter] = useState<"all" | "out" | "err" | "update">("all");
   const [paused, setPaused] = useState(false);
   const [connected, setConnected] = useState(false);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -288,7 +431,10 @@ function LogViewer({ name }: { name: string }) {
     <section className="mx-4 mt-3 rounded-xl border border-edge bg-panel">
       <div className="flex items-center justify-between border-b border-edge px-3 py-2">
         <div className="flex gap-1">
-          {(["all", "out", "err"] as const).map((f) => (
+          {(hasUpdate
+            ? (["all", "out", "err", "update"] as const)
+            : (["all", "out", "err"] as const)
+          ).map((f) => (
             <button
               key={f}
               type="button"
@@ -326,7 +472,16 @@ function LogViewer({ name }: { name: string }) {
         )}
         <pre className="whitespace-pre-wrap break-all font-mono text-[11px] leading-4">
           {visible.map((l, i) => (
-            <span key={i} className={l.stream === "err" ? "text-rose-300" : ""}>
+            <span
+              key={i}
+              className={
+                l.stream === "err"
+                  ? "text-rose-300"
+                  : l.stream === "update"
+                    ? "text-violet-300"
+                    : ""
+              }
+            >
               {l.line}
               {"\n"}
             </span>

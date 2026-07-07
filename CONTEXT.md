@@ -67,6 +67,13 @@ _Avoid_: stop, kill, unload.
 The imperative action that restarts a running Service in place (`kickstart -k`).
 _Avoid_: restart, reload.
 
+**Update**:
+The imperative action that refreshes the software behind a Service: Down, run the Service's
+declared update commands (the `update:` list in the Config) in order, then return to the prior
+state — Up again only if the Service wasn't held and every command succeeded. Any failure
+leaves the Service in a Hold.
+_Avoid_: upgrade (the underlying tools' word, not keep's).
+
 **Hold**:
 The state of a Service that is declared enabled but has been Down'd — launchd's disable database
 is holding it stopped. Surfaced by `diff`/`status` as intentional drift.

@@ -123,17 +123,36 @@ func parseUmask(s string) (int, error) {
 // ParseInterval parses a schedule interval into whole seconds. It accepts Go
 // durations ("6h", "30m", "90s") plus a bare-day suffix ("1d").
 func ParseInterval(s string) (int, error) {
+	d, err := ParseDuration(s)
+	if err != nil {
+		return 0, err
+	}
+	return int(d.Seconds()), nil
+}
+
+// ParseDuration parses a duration in keep's syntax: Go durations ("6h",
+// "30m", "90s") plus a bare-day suffix ("1d").
+func ParseDuration(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
 	if strings.HasSuffix(s, "d") {
 		n, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
 		if err != nil {
 			return 0, fmt.Errorf("invalid day duration %q", s)
 		}
-		return n * 24 * 3600, nil
+		return time.Duration(n) * 24 * time.Hour, nil
 	}
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return 0, err
+	return time.ParseDuration(s)
+}
+
+// DefaultUpdateTimeout bounds a whole update run unless the Service overrides
+// it (docs/prd-update.md U7).
+const DefaultUpdateTimeout = 10 * time.Minute
+
+// UpdateTimeoutDuration resolves the Service's whole-run update timeout:
+// the default when unset, 0 when explicitly disabled.
+func (s *Service) UpdateTimeoutDuration() (time.Duration, error) {
+	if strings.TrimSpace(s.UpdateTimeout) == "" {
+		return DefaultUpdateTimeout, nil
 	}
-	return int(d.Seconds()), nil
+	return ParseDuration(s.UpdateTimeout)
 }

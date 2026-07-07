@@ -19,6 +19,7 @@ const (
 	HealthStopped     Health = "stopped"      // resident, loaded but not running
 	HealthNotLoaded   Health = "not-loaded"   // enabled but no live job (drift)
 	HealthError       Health = "error"        // last exit non-zero
+	HealthUpdating    Health = "updating"     // an update run holds the lock (U11)
 )
 
 // ServiceStatus is the per-Service status snapshot (D10, D24).
@@ -37,6 +38,8 @@ type ServiceStatus struct {
 	Drift         bool   `json:"drift"`
 	Port          int    `json:"port,omitempty"`
 	PortListening *bool  `json:"port_listening,omitempty"`
+	HasUpdate     bool   `json:"has_update"` // declares update commands (U12)
+	Updating      bool   `json:"updating"`   // an update run is in flight (U11)
 }
 
 // Status returns status for the named Services (all if names is empty).
@@ -82,8 +85,16 @@ func (m *Manager) statusOf(s *config.Service, disabled map[string]bool) (Service
 		v := info.LastExit
 		st.LastExit = &v
 	}
+	st.HasUpdate = s.HasUpdate()
+	if st.HasUpdate {
+		st.Updating = m.UpdateInProgress(s)
+	}
 
 	switch {
+	// An in-flight update Downs the Service; report "updating" rather than a
+	// mysterious hold (U11). Not drift — it is keep's own doing.
+	case st.Updating:
+		st.Health = HealthUpdating
 	case !s.IsEnabled():
 		st.DeclaredOff = true
 		st.Health = HealthDeclaredOff

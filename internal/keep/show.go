@@ -16,13 +16,15 @@ type ShownEnv struct {
 
 // Resolved is the fully-resolved view of a Service (D6, issue #11).
 type Resolved struct {
-	Name       string     `json:"name"`
-	Type       string     `json:"type"`
-	Label      string     `json:"label"`
-	Argv       []string   `json:"argv"`
-	WorkingDir string     `json:"working_dir,omitempty"`
-	Umask      string     `json:"umask,omitempty"`
-	Env        []ShownEnv `json:"env"`
+	Name          string     `json:"name"`
+	Type          string     `json:"type"`
+	Label         string     `json:"label"`
+	Argv          []string   `json:"argv"`
+	WorkingDir    string     `json:"working_dir,omitempty"`
+	Umask         string     `json:"umask,omitempty"`
+	Env           []ShownEnv `json:"env"`
+	Update        []string   `json:"update,omitempty"`
+	UpdateTimeout string     `json:"update_timeout,omitempty"`
 }
 
 // Show resolves a Service's argv and assembled environment, masking secrets
@@ -41,13 +43,15 @@ func (m *Manager) Show(name string) (Resolved, error) {
 		return Resolved{}, err
 	}
 	r := Resolved{
-		Name:       s.Name,
-		Type:       s.Type,
-		Label:      s.EffectiveLabel(),
-		Argv:       argv,
-		WorkingDir: config.ExpandPath(s.WorkingDir),
-		Umask:      s.Umask,
-		Env:        []ShownEnv{},
+		Name:          s.Name,
+		Type:          s.Type,
+		Label:         s.EffectiveLabel(),
+		Argv:          argv,
+		WorkingDir:    config.ExpandPath(s.WorkingDir),
+		Umask:         s.Umask,
+		Env:           []ShownEnv{},
+		Update:        s.Update,
+		UpdateTimeout: s.UpdateTimeout,
 	}
 	for _, e := range entries {
 		val := e.Value

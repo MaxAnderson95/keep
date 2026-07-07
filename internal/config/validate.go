@@ -79,6 +79,35 @@ func validateService(s *Service) error {
 	if s.Port < 0 || s.Port > 65535 {
 		return fmt.Errorf("service %q: port %d out of range", s.Name, s.Port)
 	}
+	if err := validateUpdate(s); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateUpdate checks the update command list and timeout (U1, U7).
+func validateUpdate(s *Service) error {
+	for i, cmd := range s.Update {
+		words, err := SplitCommand(cmd)
+		if err != nil {
+			return fmt.Errorf("service %q: update[%d]: %w", s.Name, i, err)
+		}
+		if len(words) == 0 {
+			return fmt.Errorf("service %q: update[%d] is empty", s.Name, i)
+		}
+	}
+	if strings.TrimSpace(s.UpdateTimeout) != "" {
+		if !s.HasUpdate() {
+			return fmt.Errorf("service %q: update_timeout is only valid with update commands", s.Name)
+		}
+		d, err := ParseDuration(s.UpdateTimeout)
+		if err != nil {
+			return fmt.Errorf("service %q: update_timeout: %w", s.Name, err)
+		}
+		if d < 0 {
+			return fmt.Errorf("service %q: update_timeout must not be negative", s.Name)
+		}
+	}
 	return nil
 }
 

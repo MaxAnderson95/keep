@@ -3,7 +3,8 @@
 > **Status:** Draft — actively being shaped via a grill-with-docs session.
 > This document captures *what* we're building and *why*. The glossary of terms lives in
 > [CONTEXT.md](./CONTEXT.md); hard-to-reverse decisions get an ADR in [docs/adr/](./docs/adr/).
-> The web UI (`keep serve`) has its own PRD: [docs/prd-web.md](./docs/prd-web.md).
+> The web UI (`keep serve`) has its own PRD: [docs/prd-web.md](./docs/prd-web.md); the
+> `keep update` verb has [docs/prd-update.md](./docs/prd-update.md).
 
 ## One-liner
 
@@ -83,6 +84,8 @@ the literal `env:` map (launchd has no ambient `~/.zshrc` environment at fork to
 
 **Imperative (on the fly; accept `[svc...]` or all)**
 - `keep up` / `keep down` / `keep bounce` — see D9.
+- `keep update <svc>` — exactly one service: Down, run its declared update commands, restore
+  the prior state on success; failure leaves a hold. See [docs/prd-update.md](./docs/prd-update.md).
 - `keep status [--all]` — state per service (running / idle / held / drifted), PID, uptime, last exit; optional port-listening check via a `port:` hint.
 - `keep logs [svc] [-f]` — tail one service, or all interleaved with name prefixes.
 

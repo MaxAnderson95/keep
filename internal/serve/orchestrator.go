@@ -1,7 +1,9 @@
 package serve
 
 import (
+	"context"
 	"errors"
+	"io"
 
 	"github.com/MaxAnderson95/keep/internal/config"
 	"github.com/MaxAnderson95/keep/internal/keep"
@@ -15,6 +17,8 @@ type orchestrator interface {
 	Up(s *config.Service) error
 	Down(s *config.Service) error
 	Bounce(s *config.Service) error
+	Update(ctx context.Context, s *config.Service, out io.Writer) (keep.UpdateResult, error)
+	UpdateInProgress(s *config.Service) bool
 	Show(name string) (keep.Resolved, error)
 	ComputePlan() (keep.Plan, error)
 	Doctor() ([]keep.Finding, error)

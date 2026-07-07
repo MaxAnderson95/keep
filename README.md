@@ -19,6 +19,9 @@ boilerplate with a single declarative config and verbs that actually behave:
 - `keep up` / `keep down` / `keep bounce` — start, persistently hold, or restart a service.
   `down` actually stays down (survives reboot and re-apply), unlike a bare `SIGTERM` under
   `KeepAlive`.
+- `keep update` — run a service's declared update commands (e.g. `opencode upgrade`) the safe
+  way: stop the service, run and capture the updaters, start it again only if they all
+  succeeded. See [docs/prd-update.md](./docs/prd-update.md).
 - `keep status` / `keep logs` / `keep doctor` — see state (with an optional port-liveness check),
   tail logs, and diagnose problems.
 - bare `keep` — open the TUI.

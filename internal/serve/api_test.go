@@ -1,8 +1,10 @@
 package serve
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -17,10 +19,12 @@ import (
 
 // fakeOrch is a test double for the orchestrator seam.
 type fakeOrch struct {
-	services []config.Service
-	logDir   string
-	calls    []string
-	verbErr  error
+	services  []config.Service
+	logDir    string
+	calls     []string
+	verbErr   error
+	updating  bool  // UpdateInProgress answer
+	updateErr error // Update failure to inject
 }
 
 func (f *fakeOrch) Targets(names []string) ([]*config.Service, error) {
@@ -73,6 +77,17 @@ func (f *fakeOrch) Bounce(s *config.Service) error {
 	f.calls = append(f.calls, "bounce "+s.Name)
 	return f.verbErr
 }
+
+func (f *fakeOrch) Update(ctx context.Context, s *config.Service, out io.Writer) (keep.UpdateResult, error) {
+	f.calls = append(f.calls, "update "+s.Name)
+	fmt.Fprintf(out, "==> update %s\nupdating...\n", s.Name)
+	if f.updateErr != nil {
+		return keep.UpdateResult{Service: s.Name, Error: f.updateErr.Error()}, f.updateErr
+	}
+	return keep.UpdateResult{Service: s.Name, OK: true}, nil
+}
+
+func (f *fakeOrch) UpdateInProgress(s *config.Service) bool { return f.updating }
 
 func (f *fakeOrch) Show(name string) (keep.Resolved, error) {
 	if _, err := f.Targets([]string{name}); err != nil {

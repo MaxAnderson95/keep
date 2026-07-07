@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -106,6 +107,42 @@ func cmdBounce(bi BuildInfo) *cli.Command {
 	return verbCommand(bi, "bounce", "restart a running service in place", func(m *keep.Manager, s *config.Service) error {
 		return m.Bounce(s)
 	})
+}
+
+// cmdUpdate runs a Service's declared update commands (docs/prd-update.md):
+// Down, run, restore. Exactly one Service per invocation (U2).
+func cmdUpdate(bi BuildInfo) *cli.Command {
+	return &cli.Command{
+		Name:      "update",
+		Usage:     "down a service, run its declared update commands, and restore it",
+		ArgsUsage: "<service>",
+		Action: func(c *cli.Context) error {
+			if c.Args().Len() != 1 {
+				return cli.Exit("update requires exactly one service name", 2)
+			}
+			mgr, err := manager(c, bi)
+			if err != nil {
+				return err
+			}
+			targets, err := mgr.Targets([]string{c.Args().First()})
+			if err != nil {
+				return err
+			}
+			svc := targets[0]
+			// Ctrl-C must reach the update command's process group (it runs
+			// in its own), so treat SIGINT/SIGTERM as run cancellation.
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			if _, err := mgr.Update(ctx, svc, c.App.Writer); err != nil {
+				if errors.Is(err, keep.ErrNoUpdateCommands) || errors.Is(err, keep.ErrUpdateInProgress) {
+					return cli.Exit(fmt.Sprintf("update %s: %v", svc.Name, err), 1)
+				}
+				// The run itself already reported the failure in its output.
+				return cli.Exit("", 1)
+			}
+			return nil
+		},
+	}
 }
 
 func verbCommand(bi BuildInfo, name, usage string, fn func(*keep.Manager, *config.Service) error) *cli.Command {

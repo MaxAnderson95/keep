@@ -96,6 +96,16 @@ func printShow(c *cli.Context, r keep.Resolved) {
 	if r.Umask != "" {
 		fmt.Fprintf(w, "umask:       %s\n", r.Umask)
 	}
+	for i, u := range r.Update {
+		label := "update:"
+		if i > 0 {
+			label = ""
+		}
+		fmt.Fprintf(w, "%-12s %s\n", label, u)
+	}
+	if r.UpdateTimeout != "" {
+		fmt.Fprintf(w, "update_timeout: %s\n", r.UpdateTimeout)
+	}
 	if len(r.Env) == 0 {
 		fmt.Fprintln(w, "environment: (none contributed by keep)")
 		return
