@@ -22,9 +22,19 @@ jobs:
         with:
           go-version: stable
 
+      # The installer script is checksum-pinned and the vp launcher version is
+      # pinned via VP_VERSION, matching the SHA-pinning discipline of the
+      # actions above (the vite-plus toolchain itself is pinned by
+      # web/pnpm-workspace.yaml + the lockfile). Deliberate upgrades: re-hash
+      # the script and bump VP_VERSION together.
       - name: Install Vite+
+        env:
+          VP_VERSION: 0.1.24
+          VP_INSTALLER_SHA256: 58bb052c6a007e662e99667d65686251b16d6b39aa21155487da6d51280b3d54
         run: |
-          curl -fsSL https://vite.plus | bash
+          curl -fsSL https://vite.plus -o /tmp/vp-install.sh
+          echo "${VP_INSTALLER_SHA256}  /tmp/vp-install.sh" | sha256sum -c -
+          bash /tmp/vp-install.sh
           echo "$HOME/.vite-plus/bin" >> "$GITHUB_PATH"
 
       - name: Run GoReleaser

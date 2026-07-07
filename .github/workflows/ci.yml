@@ -21,9 +21,16 @@ jobs:
         with:
           go-version: stable
 
+      # Pinned the same way as release.yml — keep the hash and VP_VERSION in
+      # sync between the two workflows when upgrading.
       - name: Install Vite+
+        env:
+          VP_VERSION: 0.1.24
+          VP_INSTALLER_SHA256: 58bb052c6a007e662e99667d65686251b16d6b39aa21155487da6d51280b3d54
         run: |
-          curl -fsSL https://vite.plus | bash
+          curl -fsSL https://vite.plus -o /tmp/vp-install.sh
+          echo "${VP_INSTALLER_SHA256}  /tmp/vp-install.sh" | sha256sum -c -
+          bash /tmp/vp-install.sh
           echo "$HOME/.vite-plus/bin" >> "$GITHUB_PATH"
 
       - name: Frontend install, check, build
