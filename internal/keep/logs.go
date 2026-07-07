@@ -10,14 +10,16 @@ import (
 	"time"
 )
 
-// LogTarget is one log stream (stdout or stderr) for a Service.
+// LogTarget is one log stream (stdout, stderr, or update runs) for a Service.
 type LogTarget struct {
 	Service string
-	Stream  string // "out" | "err"
+	Stream  string // "out" | "err" | "update"
 	Path    string
 }
 
 // LogTargets returns the log streams for the named Services (all if empty).
+// Services with update commands include their update log, so a detached
+// update run can be reattached to through the ordinary log surfaces (U9).
 func (m *Manager) LogTargets(names []string) ([]LogTarget, error) {
 	targets, err := m.Targets(names)
 	if err != nil {
@@ -29,6 +31,9 @@ func (m *Manager) LogTargets(names []string) ([]LogTarget, error) {
 			LogTarget{Service: s.Name, Stream: "out", Path: m.Cfg.StdoutPath(s)},
 			LogTarget{Service: s.Name, Stream: "err", Path: m.Cfg.StderrPath(s)},
 		)
+		if s.HasUpdate() {
+			out = append(out, LogTarget{Service: s.Name, Stream: "update", Path: m.Cfg.UpdateLogPath(s)})
+		}
 	}
 	return out, nil
 }

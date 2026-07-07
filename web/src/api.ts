@@ -9,7 +9,8 @@ export type Health =
   | "declared-off"
   | "stopped"
   | "not-loaded"
-  | "error";
+  | "error"
+  | "updating";
 
 export interface ServiceStatus {
   name: string;
@@ -26,6 +27,8 @@ export interface ServiceStatus {
   drift: boolean;
   port?: number;
   port_listening?: boolean;
+  has_update: boolean;
+  updating: boolean;
 }
 
 export interface ServicePlan {
@@ -65,6 +68,8 @@ export interface Resolved {
   working_dir?: string;
   umask?: string;
   env: ShownEnv[];
+  update?: string[];
+  update_timeout?: string;
 }
 
 export interface Meta {
@@ -140,7 +145,7 @@ export const api = {
       `/api/v1/services/${encodeURIComponent(name)}/${verb}`,
     ),
   logs: (name: string, lines = 200) =>
-    request<{ out: string[]; err: string[] }>(
+    request<{ out: string[]; err: string[]; update?: string[] }>(
       `/api/v1/services/${encodeURIComponent(name)}/logs?lines=${lines}`,
     ),
   show: (name: string) => request<Resolved>(`/api/v1/services/${encodeURIComponent(name)}/show`),
@@ -175,4 +180,77 @@ export const api = {
 
 export function logStreamUrl(name: string, lines = 200): string {
   return `/api/v1/services/${encodeURIComponent(name)}/logs/stream?lines=${lines}`;
+}
+
+// UpdateDone is the terminal SSE event of an update run (mirrors the Go
+// updateDoneEvent: keep.UpdateResult + done flag + refreshed status).
+export interface UpdateDone {
+  done: boolean;
+  service: string;
+  ok: boolean;
+  stayed_held: boolean;
+  timed_out?: boolean;
+  error?: string;
+  status?: ServiceStatus;
+}
+
+// runUpdate POSTs .../update and consumes the SSE response with fetch
+// (EventSource cannot POST): output lines go to onLine as they stream, and
+// the terminal result event resolves the promise. The run is detached on the
+// server — aborting or losing this request does NOT cancel the update.
+export async function runUpdate(name: string, onLine: (line: string) => void): Promise<UpdateDone> {
+  const res = await fetch(`/api/v1/services/${encodeURIComponent(name)}/update`, {
+    method: "POST",
+  });
+  const contentType = res.headers.get("Content-Type") ?? "";
+  if (!res.ok || !contentType.includes("text/event-stream")) {
+    let code = "http_error";
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const body = (await res.json()) as { error?: { code: string; message: string } };
+      if (body.error) {
+        code = body.error.code;
+        message = body.error.message;
+      }
+    } catch {
+      // non-JSON error body; keep the status text
+    }
+    throw new ApiError(res.status, code, message);
+  }
+  if (!res.body) {
+    throw new ApiError(0, "stream_unsupported", "response body is not streamable");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let done: UpdateDone | null = null;
+  for (;;) {
+    const { value, done: eof } = await reader.read();
+    if (eof) break;
+    buf += decoder.decode(value, { stream: true });
+    for (;;) {
+      const sep = buf.indexOf("\n\n");
+      if (sep < 0) break;
+      const frame = buf.slice(0, sep);
+      buf = buf.slice(sep + 2);
+      for (const line of frame.split("\n")) {
+        if (!line.startsWith("data: ")) continue; // skip ping comments
+        const ev = JSON.parse(line.slice(6)) as { line?: string } & Partial<UpdateDone>;
+        if (ev.done) {
+          done = ev as UpdateDone;
+        } else if (ev.line !== undefined) {
+          onLine(ev.line);
+        }
+      }
+    }
+  }
+  if (!done) {
+    throw new ApiError(
+      0,
+      "stream_interrupted",
+      "the update stream ended without a result — the run continues on the server; check the update log",
+    );
+  }
+  return done;
 }

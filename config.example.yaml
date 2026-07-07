@@ -27,6 +27,9 @@ services:
     working_dir: ~
     umask: "077"
     port: 4096                        # enables the status port-listening check
+    update:                           # `keep update opencode`: Down, run these in
+      - ~/.opencode/bin/opencode upgrade  # order, Up again only if all exit 0
+    # update_timeout: 10m             # whole-run timeout; default 10m; 0 disables
 
   openchamber:
     type: resident

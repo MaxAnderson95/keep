@@ -59,6 +59,13 @@ type Service struct {
 	LogDir     string // per-service override
 	StdoutPath string // per-service override of the full path
 	StderrPath string // per-service override of the full path
+
+	// Update declares the commands `keep update` runs for this Service, in
+	// order (docs/prd-update.md U1). Each entry is tokenized like Command —
+	// no shell. UpdateTimeout bounds the whole run (U7); empty means the
+	// default, "0" disables.
+	Update        []string
+	UpdateTimeout string
 }
 
 // Schedule describes when a scheduled Service fires (D18). Exactly one of
@@ -93,6 +100,11 @@ func (s *Service) EffectiveLabel() string {
 // IsScheduled reports whether this is a scheduled Service.
 func (s *Service) IsScheduled() bool {
 	return s.Type == TypeScheduled
+}
+
+// HasUpdate reports whether the Service declares update commands.
+func (s *Service) HasUpdate() bool {
+	return len(s.Update) > 0
 }
 
 // Service returns the named Service.
@@ -133,6 +145,11 @@ func (c *Config) StderrPath(s *Service) string {
 	return filepath.Join(c.ResolveLogDir(s), s.Name+".err.log")
 }
 
+// UpdateLogPath is where a Service's update runs are recorded (U6).
+func (c *Config) UpdateLogPath(s *Service) string {
+	return filepath.Join(c.ResolveLogDir(s), s.Name+".update.log")
+}
+
 // raw* mirror the on-disk YAML shape before normalization.
 type rawConfig struct {
 	Defaults rawDefaults           `yaml:"defaults"`
@@ -168,6 +185,9 @@ type rawService struct {
 	LogDir     string            `yaml:"log_dir"`
 	StdoutPath string            `yaml:"stdout_path"`
 	StderrPath string            `yaml:"stderr_path"`
+
+	Update        []string `yaml:"update"`
+	UpdateTimeout string   `yaml:"update_timeout"`
 }
 
 // rawSchedule accepts schedule.calendar as either a single mapping or a list
@@ -243,6 +263,9 @@ func Parse(data []byte) (*Config, error) {
 			LogDir:     rs.LogDir,
 			StdoutPath: rs.StdoutPath,
 			StderrPath: rs.StderrPath,
+
+			Update:        rs.Update,
+			UpdateTimeout: rs.UpdateTimeout,
 		}
 		if svc.Type == "" {
 			svc.Type = TypeResident // default (D17)

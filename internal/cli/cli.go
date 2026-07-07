@@ -57,6 +57,7 @@ func newApp(bi BuildInfo) *cli.App {
 			cmdUp(bi),
 			cmdDown(bi),
 			cmdBounce(bi),
+			cmdUpdate(bi),
 			cmdStatus(bi),
 			cmdLogs(bi),
 			cmdShow(bi),

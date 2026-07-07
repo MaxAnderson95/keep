@@ -23,6 +23,7 @@ type Manager struct {
 
 	ctl       launchd.Controller // the launchd control seam
 	agentsDir string             // where generated artifacts are written
+	stateDir  string             // machine-local state (update locks)
 }
 
 // NewManager builds a Manager wired to the production launchd Controller and
@@ -58,6 +59,14 @@ func (m *Manager) LaunchAgentsDir() string {
 		return m.agentsDir
 	}
 	return config.LaunchAgentsDir()
+}
+
+// StateDir is where keep keeps machine-local state (e.g. update locks).
+func (m *Manager) StateDir() string {
+	if m.stateDir != "" {
+		return m.stateDir
+	}
+	return config.StateDir()
 }
 
 // PlistPath is the on-disk path of a Service's generated artifact.

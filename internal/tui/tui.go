@@ -208,6 +208,8 @@ func healthColor(h keep.Health) lipgloss.Style {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("78"))
 	case keep.HealthHeld, keep.HealthDeclaredOff:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	case keep.HealthUpdating:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("111"))
 	case keep.HealthError, keep.HealthStopped, keep.HealthNotLoaded:
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
 	default:

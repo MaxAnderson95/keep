@@ -50,7 +50,11 @@ func (m *Manager) RotateLogs() ([]string, error) {
 	seen := map[string]bool{}
 	for i := range m.Cfg.Services {
 		s := &m.Cfg.Services[i]
-		for _, path := range []string{m.Cfg.StdoutPath(s), m.Cfg.StderrPath(s)} {
+		paths := []string{m.Cfg.StdoutPath(s), m.Cfg.StderrPath(s)}
+		if s.HasUpdate() {
+			paths = append(paths, m.Cfg.UpdateLogPath(s))
+		}
+		for _, path := range paths {
 			if seen[path] {
 				continue
 			}

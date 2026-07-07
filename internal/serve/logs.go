@@ -125,12 +125,13 @@ func (s *Server) handleLogsStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func writeSSE(w io.Writer, v any) {
+func writeSSE(w io.Writer, v any) error {
 	data, err := json.Marshal(v)
 	if err != nil {
-		return
+		return err
 	}
-	fmt.Fprintf(w, "data: %s\n\n", data)
+	_, err = fmt.Fprintf(w, "data: %s\n\n", data)
+	return err
 }
 
 // logFollower tracks one log file's read position across poll ticks.
