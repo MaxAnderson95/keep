@@ -47,6 +47,12 @@ are exempt from the CSRF checks.
   credentials + signing key). It is not portable and must never be committed.
 - Passkeys are origin-bound: renaming the Tailscale Service hostname means re-registering;
   loopback access falls back to password.
+- Session revocation is decoupled from password rotation: sessions are signed with the state
+  file's key, not the password, so rotating a leaked `KEEP_SERVE_PASSWORD` does not invalidate
+  already-issued sessions (up to their ~30-day expiry). Today the only revocation lever is
+  deleting the state file — which also destroys registered passkeys. If this ever matters in
+  practice, the natural fix is a `keep serve` maintenance flag that rotates only the signing
+  key.
 - Serve is inert until its secrets exist: the `keep-web` Service entry must reference an
   env_file providing `KEEP_SERVE_PASSWORD` and/or `KEEP_SERVE_TOKEN` — serve refuses to start
   with neither. Token-only is allowed (API-only deployments) but disables browser login, so no
