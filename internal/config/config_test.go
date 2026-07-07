@@ -232,6 +232,12 @@ func TestUpdateTimeoutDefaultsAndDisable(t *testing.T) {
 	if d, err := s.UpdateTimeoutDuration(); err != nil || d != 0 {
 		t.Fatalf("disabled = %v, %v; want 0", d, err)
 	}
+	// Negative must error here, not silently disable the timeout: the engine
+	// treats <=0 as "no timeout", and unvalidated Services call this directly.
+	s.UpdateTimeout = "-5m"
+	if _, err := s.UpdateTimeoutDuration(); err == nil {
+		t.Fatal("negative update_timeout should error")
+	}
 }
 
 func TestValidateUpdateErrors(t *testing.T) {

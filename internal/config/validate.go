@@ -100,12 +100,8 @@ func validateUpdate(s *Service) error {
 		if !s.HasUpdate() {
 			return fmt.Errorf("service %q: update_timeout is only valid with update commands", s.Name)
 		}
-		d, err := ParseDuration(s.UpdateTimeout)
-		if err != nil {
+		if _, err := s.UpdateTimeoutDuration(); err != nil {
 			return fmt.Errorf("service %q: update_timeout: %w", s.Name, err)
-		}
-		if d < 0 {
-			return fmt.Errorf("service %q: update_timeout must not be negative", s.Name)
 		}
 	}
 	return nil

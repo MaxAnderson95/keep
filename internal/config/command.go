@@ -149,10 +149,19 @@ func ParseDuration(s string) (time.Duration, error) {
 const DefaultUpdateTimeout = 10 * time.Minute
 
 // UpdateTimeoutDuration resolves the Service's whole-run update timeout:
-// the default when unset, 0 when explicitly disabled.
+// the default when unset, 0 when explicitly disabled. Negative durations are
+// rejected here — the engine treats <=0 as "no timeout", so letting one
+// through would silently disable the bound (validation reuses this check).
 func (s *Service) UpdateTimeoutDuration() (time.Duration, error) {
 	if strings.TrimSpace(s.UpdateTimeout) == "" {
 		return DefaultUpdateTimeout, nil
 	}
-	return ParseDuration(s.UpdateTimeout)
+	d, err := ParseDuration(s.UpdateTimeout)
+	if err != nil {
+		return 0, err
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("negative duration %q", s.UpdateTimeout)
+	}
+	return d, nil
 }
