@@ -2,6 +2,7 @@ package serve
 
 import (
 	"crypto/subtle"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -103,8 +104,25 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// requestIsHTTPS reports whether the client connection is effectively HTTPS.
+// X-Forwarded-Proto is honored only when the immediate peer is loopback —
+// i.e. when it can actually be the local reverse proxy (Tailscale Serve).
+// serve binds loopback by default, but --host is operator-configurable, and a
+// routable client asserting the header must not be able to flip the Secure
+// cookie flag or the WebAuthn origin scheme.
 func requestIsHTTPS(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	if r.TLS != nil {
+		return true
+	}
+	if !strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return false
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
