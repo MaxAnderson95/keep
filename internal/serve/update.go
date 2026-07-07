@@ -3,16 +3,22 @@ package serve
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/MaxAnderson95/keep/internal/keep"
 )
 
 // handleUpdate starts an update run and streams its output as SSE: one
 // {"line": ...} event per output line, then a terminal event with the
-// UpdateResult (docs/prd-update.md U9). The run is detached — it executes on
-// a background context, so a client disconnect never cancels an in-flight
-// update; reattach by streaming the service's update log.
+// UpdateResult (docs/prd-update.md U9). The run executes in a background
+// goroutine on a detached context; this handler goroutine owns the
+// ResponseWriter, relaying output lines and heartbeating (like the log
+// stream) so an idle proxy doesn't drop the connection during a silent
+// update command. A client disconnect never cancels the run — the handler
+// keeps draining until the run completes and everything still lands in the
+// update log; reattach by streaming that log.
 //
 // The self Service is refused outright (U10): the run's first act is Down,
 // which would kill this server mid-run and never bring it back.
@@ -59,12 +65,54 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		"service", name,
 		"tailscale_user", r.Header.Get("Tailscale-User-Login"))
 
-	// context.Background(), NOT r.Context(): the run must survive the client.
-	lw := &sseLineWriter{w: w, flusher: flusher}
-	res, err := o.Update(context.Background(), svc, lw)
-	lw.flushPartial()
-	if err != nil && res.Error == "" {
-		res.Error = err.Error()
+	// The run writes lines to a channel from its own goroutine; only this
+	// goroutine touches w (the exec copier and a ping ticker writing to the
+	// same ResponseWriter would race). context.Background(), NOT
+	// r.Context(): the run must survive the client.
+	lines := make(chan string, 64)
+	outcome := make(chan updateOutcome, 1)
+	go func() {
+		lw := &lineChanWriter{ch: lines}
+		res, err := o.Update(context.Background(), svc, lw)
+		lw.flushPartial()
+		close(lines)
+		outcome <- updateOutcome{res: res, err: err}
+	}()
+
+	ping := time.NewTicker(pingInterval)
+	defer ping.Stop()
+	dead := false // client gone; keep draining, stop writing
+	for lines != nil {
+		select {
+		case line, ok := <-lines:
+			if !ok {
+				lines = nil
+				continue
+			}
+			if dead {
+				continue
+			}
+			if err := writeSSE(w, updateLineEvent{Line: line}); err != nil {
+				dead = true
+				continue
+			}
+			flusher.Flush()
+		case <-ping.C:
+			if dead {
+				continue
+			}
+			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+				dead = true
+				continue
+			}
+			flusher.Flush()
+		}
+	}
+
+	out := <-outcome
+	res := out.res
+	if out.err != nil && res.Error == "" {
+		res.Error = out.err.Error()
 	}
 	s.log.Info("update finished", "service", name, "ok", res.OK, "error", res.Error)
 
@@ -72,8 +120,16 @@ func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if statuses, err := o.Status([]string{name}); err == nil && len(statuses) == 1 {
 		done.Status = &statuses[0]
 	}
-	writeSSE(w, done)
-	flusher.Flush()
+	if !dead {
+		_ = writeSSE(w, done)
+		flusher.Flush()
+	}
+}
+
+// updateOutcome carries a finished run's result to the handler goroutine.
+type updateOutcome struct {
+	res keep.UpdateResult
+	err error
 }
 
 // updateDoneEvent is the terminal SSE event of an update stream.
@@ -83,51 +139,36 @@ type updateDoneEvent struct {
 	Status *keep.ServiceStatus `json:"status,omitempty"`
 }
 
-// sseLineWriter turns an update run's raw output into per-line SSE events.
-// Writes never fail (the engine treats output as best-effort anyway); after
-// the client disconnects it degrades to a no-op.
-type sseLineWriter struct {
-	w       http.ResponseWriter
-	flusher http.Flusher
-	buf     []byte
-	dead    bool
+// lineChanWriter splits an update run's raw output into complete lines on a
+// channel. Sends may block briefly, but never indefinitely: the handler
+// drains the channel until the run closes it, even after a client
+// disconnect. Writes never error (the engine treats output as best-effort
+// anyway).
+type lineChanWriter struct {
+	ch  chan<- string
+	buf []byte
 }
 
-func (lw *sseLineWriter) Write(p []byte) (int, error) {
-	if lw.dead {
-		return len(p), nil
-	}
+func (lw *lineChanWriter) Write(p []byte) (int, error) {
 	lw.buf = append(lw.buf, p...)
-	wrote := false
 	for {
 		i := bytes.IndexByte(lw.buf, '\n')
 		if i < 0 {
 			break
 		}
-		lw.emit(string(lw.buf[:i]))
+		lw.ch <- string(lw.buf[:i])
 		lw.buf = lw.buf[i+1:]
-		wrote = true
-	}
-	if wrote && !lw.dead {
-		lw.flusher.Flush()
 	}
 	return len(p), nil
 }
 
 // flushPartial emits any trailing output that did not end in a newline.
-func (lw *sseLineWriter) flushPartial() {
-	if lw.dead || len(lw.buf) == 0 {
+func (lw *lineChanWriter) flushPartial() {
+	if len(lw.buf) == 0 {
 		return
 	}
-	lw.emit(string(lw.buf))
+	lw.ch <- string(lw.buf)
 	lw.buf = nil
-	lw.flusher.Flush()
-}
-
-func (lw *sseLineWriter) emit(line string) {
-	if err := writeSSE(lw.w, updateLineEvent{Line: line}); err != nil {
-		lw.dead = true
-	}
 }
 
 // updateLineEvent is one line of update run output.
