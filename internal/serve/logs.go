@@ -179,14 +179,48 @@ func (f *logFollower) drain() []string {
 	}
 }
 
+// maxTailWindow bounds how much of a log file a tail reads. Rotation is off
+// by default (D23), so a resident's log can grow unbounded — reading the
+// whole file per /logs request or SSE connection would be O(file size).
+const maxTailWindow = 4 << 20 // 4 MiB
+
 // tailFile returns the last n lines of a file plus the file size the read
-// covered, so a follower can pick up exactly where the tail ended.
+// covered, so a follower can pick up exactly where the tail ended. It reads
+// at most maxTailWindow bytes from the end of the file.
 func tailFile(path string, n int) ([]string, int64, error) {
-	data, err := os.ReadFile(path)
+	return tailFileWindow(path, n, maxTailWindow)
+}
+
+func tailFileWindow(path string, n int, window int64) ([]string, int64, error) {
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, 0, err
 	}
-	size := int64(len(data))
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, 0, err
+	}
+	size := fi.Size()
+	start := int64(0)
+	if size > window {
+		start = size - window
+	}
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return nil, 0, err
+	}
+	data := make([]byte, size-start)
+	if _, err := io.ReadFull(f, data); err != nil {
+		return nil, 0, err
+	}
+	if start > 0 {
+		// The window almost certainly opens mid-line; drop the partial line.
+		if i := bytes.IndexByte(data, '\n'); i >= 0 {
+			data = data[i+1:]
+		} else {
+			data = nil
+		}
+	}
 	trimmed := bytes.TrimRight(data, "\n")
 	if len(trimmed) == 0 {
 		return nil, size, nil
