@@ -86,25 +86,29 @@ func printStatus(c *cli.Context, statuses []keep.ServiceStatus) {
 
 func printShow(c *cli.Context, r keep.Resolved) {
 	w := c.App.Writer
-	fmt.Fprintf(w, "service:     %s\n", r.Name)
-	fmt.Fprintf(w, "type:        %s\n", r.Type)
-	fmt.Fprintf(w, "label:       %s\n", r.Label)
-	fmt.Fprintf(w, "command:     %s\n", strings.Join(r.Argv, " "))
+	// %-15s fits the widest label (update_timeout:) so values align.
+	row := func(label, value string) {
+		fmt.Fprintf(w, "%-15s %s\n", label, value)
+	}
+	row("service:", r.Name)
+	row("type:", r.Type)
+	row("label:", r.Label)
+	row("command:", strings.Join(r.Argv, " "))
 	if r.WorkingDir != "" {
-		fmt.Fprintf(w, "working_dir: %s\n", r.WorkingDir)
+		row("working_dir:", r.WorkingDir)
 	}
 	if r.Umask != "" {
-		fmt.Fprintf(w, "umask:       %s\n", r.Umask)
+		row("umask:", r.Umask)
 	}
 	for i, u := range r.Update {
 		label := "update:"
 		if i > 0 {
 			label = ""
 		}
-		fmt.Fprintf(w, "%-12s %s\n", label, u)
+		row(label, u)
 	}
 	if r.UpdateTimeout != "" {
-		fmt.Fprintf(w, "update_timeout: %s\n", r.UpdateTimeout)
+		row("update_timeout:", r.UpdateTimeout)
 	}
 	if len(r.Env) == 0 {
 		fmt.Fprintln(w, "environment: (none contributed by keep)")
