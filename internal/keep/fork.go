@@ -3,6 +3,7 @@ package keep
 import (
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 
 	"github.com/MaxAnderson95/keep/internal/config"
@@ -29,6 +30,9 @@ func (m *Manager) Fork(name string) error {
 	if err != nil {
 		return fmt.Errorf("fork %q: %w", name, err)
 	}
+	// Every Service learns its own name so it can self-identify (e.g. `keep
+	// serve` refusing to down the Service running it). Not overridable.
+	env = setEnv(env, "KEEP_SERVICE", s.Name)
 
 	bin, err := resolveExecutable(argv[0], pathFromEnv(env))
 	if err != nil {
@@ -53,4 +57,17 @@ func (m *Manager) Fork(name string) error {
 		return fmt.Errorf("fork %q: exec %s: %w", name, bin, err)
 	}
 	return nil // unreachable on success
+}
+
+// setEnv returns env with key set to val, replacing an existing entry in
+// place so the variable appears exactly once.
+func setEnv(env []string, key, val string) []string {
+	prefix := key + "="
+	for i, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			env[i] = prefix + val
+			return env
+		}
+	}
+	return append(env, prefix+val)
 }

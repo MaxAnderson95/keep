@@ -3,6 +3,7 @@
 > **Status:** Draft — actively being shaped via a grill-with-docs session.
 > This document captures *what* we're building and *why*. The glossary of terms lives in
 > [CONTEXT.md](./CONTEXT.md); hard-to-reverse decisions get an ADR in [docs/adr/](./docs/adr/).
+> The web UI (`keep serve`) has its own PRD: [docs/prd-web.md](./docs/prd-web.md).
 
 ## One-liner
 
