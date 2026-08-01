@@ -365,7 +365,9 @@ function ShowPanel({ name }: { name: string }) {
             </p>
           ))}
           {resolved.version_command && (
-            <p className="mt-1 break-all font-mono text-dim">version {resolved.version_command}</p>
+            <p className="mt-1 break-all font-mono text-dim">
+              version_command {resolved.version_command}
+            </p>
           )}
           <table className="mt-2 w-full">
             <tbody>
