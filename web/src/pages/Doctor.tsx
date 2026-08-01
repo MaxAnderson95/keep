@@ -1,8 +1,16 @@
-import { api } from "../api";
+import { api, type Finding } from "../api";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { usePoll } from "../hooks/usePoll";
 
 const POLL_MS = 10000;
+
+// Severity sets the visual weight: red demands action, amber warns, and info
+// stays neutral so an advisory finding never reads like a fault.
+const SEVERITY: Record<Finding["severity"], { card: string; label: string }> = {
+  error: { card: "border-red-500/40 bg-red-500/10", label: "text-red-300" },
+  warning: { card: "border-amber-500/40 bg-amber-500/10", label: "text-amber-300" },
+  info: { card: "border-edge bg-panel", label: "text-dim" },
+};
 
 export function DoctorPage() {
   const { data, error } = usePoll(() => api.doctor(), POLL_MS);
@@ -19,21 +27,10 @@ export function DoctorPage() {
         )}
         <ul className="flex flex-col gap-2">
           {data?.findings.map((f, i) => (
-            <li
-              key={i}
-              className={`rounded-xl border px-4 py-3 ${
-                f.severity === "error"
-                  ? "border-red-500/40 bg-red-500/10"
-                  : "border-amber-500/40 bg-amber-500/10"
-              }`}
-            >
+            <li key={i} className={`rounded-xl border px-4 py-3 ${SEVERITY[f.severity].card}`}>
               <div className="flex items-center justify-between gap-2 text-sm">
                 <span className="font-semibold">{f.service || "keep"}</span>
-                <span
-                  className={`text-xs font-medium uppercase ${
-                    f.severity === "error" ? "text-red-300" : "text-amber-300"
-                  }`}
-                >
+                <span className={`text-xs font-medium uppercase ${SEVERITY[f.severity].label}`}>
                   {f.severity}
                 </span>
               </div>

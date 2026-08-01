@@ -30,6 +30,11 @@ services:
     update:                           # `keep update opencode`: Down, run these in
       - ~/.opencode/bin/opencode upgrade  # order, Up again only if all exit 0
     # update_timeout: 10m             # whole-run timeout; default 10m; 0 disables
+    # Optional (D26). `keep fork` runs this once at start, before exec, and
+    # caches the first output line; status/TUI/web display it only while that
+    # exact process is still running. Never run on a status read. Resident
+    # services only. Omit it and nothing about keep changes.
+    version_command: ~/.opencode/bin/opencode --version
 
   openchamber:
     type: resident

@@ -51,6 +51,12 @@ func (m *Manager) Fork(name string) error {
 		}
 	}
 
+	// Record the version this start is about to run (D26, ADR-0007). A no-op
+	// unless the Service declares a version_command, and never able to fail or
+	// delay the start beyond its own timeout. os.Getpid() is the PID the
+	// Service will have, because exec preserves it.
+	m.CaptureVersion(s, env, os.Getpid())
+
 	// Replace this process with the real command (same PID).
 	argv[0] = bin
 	if err := syscall.Exec(bin, argv, env); err != nil {

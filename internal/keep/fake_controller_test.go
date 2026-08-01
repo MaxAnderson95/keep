@@ -123,8 +123,9 @@ func (f *fakeController) didCall(substr string) bool {
 	return false
 }
 
-// testManager builds a Manager wired to a fake Controller and a temp agents
-// directory, so apply writes real files but drives a fake launchd.
+// testManager builds a Manager wired to a fake Controller and temp agents and
+// state directories, so apply writes real files but drives a fake launchd and
+// never touches the real home directory.
 func testManager(t *testing.T, cfg *config.Config, ctl launchd.Controller) *Manager {
 	t.Helper()
 	return &Manager{
@@ -133,6 +134,7 @@ func testManager(t *testing.T, cfg *config.Config, ctl launchd.Controller) *Mana
 		Version:   "test",
 		ctl:       ctl,
 		agentsDir: t.TempDir(),
+		stateDir:  t.TempDir(),
 	}
 }
 

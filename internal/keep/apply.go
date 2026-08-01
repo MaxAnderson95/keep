@@ -114,6 +114,11 @@ func (m *Manager) Apply() (ApplyResult, error) {
 		}
 		res.Removed = append(res.Removed, rm.Name)
 	}
+
+	// Drop cached versions that can no longer be displayed — removed Services
+	// and edited version_commands (D26). Best-effort: stale display metadata
+	// must not fail a reconcile.
+	m.pruneVersionEntries()
 	return res, nil
 }
 

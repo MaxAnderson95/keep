@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -66,6 +67,13 @@ type Service struct {
 	// default, "0" disables.
 	Update        []string
 	UpdateTimeout string
+
+	// VersionCommand is the optional command `keep fork` runs once, before
+	// exec, to record the version the Service is about to run (D26,
+	// ADR-0007). Tokenized like Command — no shell. Empty means the whole
+	// feature is off for this Service: nothing is executed, cached, checked,
+	// or displayed.
+	VersionCommand string
 }
 
 // Schedule describes when a scheduled Service fires (D18). Exactly one of
@@ -105,6 +113,12 @@ func (s *Service) IsScheduled() bool {
 // HasUpdate reports whether the Service declares update commands.
 func (s *Service) HasUpdate() bool {
 	return len(s.Update) > 0
+}
+
+// HasVersionCommand reports whether the Service opts in to version capture
+// (D26). Everything version-related is gated on this returning true.
+func (s *Service) HasVersionCommand() bool {
+	return strings.TrimSpace(s.VersionCommand) != ""
 }
 
 // Service returns the named Service.
@@ -188,6 +202,8 @@ type rawService struct {
 
 	Update        []string `yaml:"update"`
 	UpdateTimeout string   `yaml:"update_timeout"`
+
+	VersionCommand string `yaml:"version_command"`
 }
 
 // rawSchedule accepts schedule.calendar as either a single mapping or a list
@@ -266,6 +282,8 @@ func Parse(data []byte) (*Config, error) {
 
 			Update:        rs.Update,
 			UpdateTimeout: rs.UpdateTimeout,
+
+			VersionCommand: rs.VersionCommand,
 		}
 		if svc.Type == "" {
 			svc.Type = TypeResident // default (D17)

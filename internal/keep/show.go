@@ -25,6 +25,8 @@ type Resolved struct {
 	Env           []ShownEnv `json:"env"`
 	Update        []string   `json:"update,omitempty"`
 	UpdateTimeout string     `json:"update_timeout,omitempty"`
+
+	VersionCommand string `json:"version_command,omitempty"`
 }
 
 // Show resolves a Service's argv and assembled environment, masking secrets
@@ -52,6 +54,8 @@ func (m *Manager) Show(name string) (Resolved, error) {
 		Env:           []ShownEnv{},
 		Update:        s.Update,
 		UpdateTimeout: s.UpdateTimeout,
+
+		VersionCommand: s.VersionCommand,
 	}
 	for _, e := range entries {
 		val := e.Value

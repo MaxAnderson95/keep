@@ -82,6 +82,27 @@ func validateService(s *Service) error {
 	if err := validateUpdate(s); err != nil {
 		return err
 	}
+	if err := validateVersionCommand(s); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateVersionCommand checks the optional version_command (D26). A Service
+// that declares none is always valid — this returns nil before touching
+// anything else.
+func validateVersionCommand(s *Service) error {
+	if !s.HasVersionCommand() {
+		return nil
+	}
+	// A scheduled Service is idle by definition, so the live-process display
+	// rule would silently show nothing forever. Fail loudly instead.
+	if s.IsScheduled() {
+		return fmt.Errorf("service %q: version_command is only valid on a resident service", s.Name)
+	}
+	if _, err := s.ResolveVersionArgv(); err != nil {
+		return fmt.Errorf("service %q: version_command: %w", s.Name, err)
+	}
 	return nil
 }
 

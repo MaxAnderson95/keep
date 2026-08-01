@@ -40,6 +40,13 @@ type ServiceStatus struct {
 	PortListening *bool  `json:"port_listening,omitempty"`
 	HasUpdate     bool   `json:"has_update"` // declares update commands (U12)
 	Updating      bool   `json:"updating"`   // an update run is in flight (U11)
+
+	// HasVersionCommand reports the opt-in; Version is the version the live
+	// process is running, present only while the cached capture still matches
+	// that process and the declared command (D26). Absent for every Service
+	// that declares no version_command.
+	HasVersionCommand bool   `json:"has_version_command"`
+	Version           string `json:"version,omitempty"`
 }
 
 // Status returns status for the named Services (all if names is empty).
@@ -129,6 +136,14 @@ func (m *Manager) statusOf(s *config.Service, disabled map[string]bool) (Service
 			st.Health = HealthStopped
 			st.Drift = true
 		}
+	}
+
+	// Optional running-version display (D26). Reads a cache file — the version
+	// command itself only ever runs at fork — and stays empty unless the
+	// capture belongs to this exact live process.
+	st.HasVersionCommand = s.HasVersionCommand()
+	if st.HasVersionCommand && isRunning(info) {
+		st.Version = m.LiveVersion(s, info.PID)
 	}
 
 	// Optional port-listening liveness check (D10, issue #9).

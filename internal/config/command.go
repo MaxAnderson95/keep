@@ -96,6 +96,21 @@ func (s *Service) ResolveArgv() ([]string, error) {
 	return argv, nil
 }
 
+// ResolveVersionArgv returns the explicit argv for the Service's
+// version_command, with a leading ~ expanded on the first token. Only
+// meaningful when HasVersionCommand reports true.
+func (s *Service) ResolveVersionArgv() ([]string, error) {
+	argv, err := SplitCommand(s.VersionCommand)
+	if err != nil {
+		return nil, err
+	}
+	if len(argv) == 0 {
+		return nil, fmt.Errorf("version_command is empty after splitting")
+	}
+	argv[0] = ExpandPath(argv[0])
+	return argv, nil
+}
+
 // ParsedUmask returns the Service's umask as an integer. ok is false when no
 // umask was declared.
 func (s *Service) ParsedUmask() (mask int, ok bool, err error) {
