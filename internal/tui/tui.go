@@ -232,8 +232,22 @@ func (m model) listView() string {
 	b.WriteString(titleStyle.Render("keep — services"))
 	b.WriteString("\n\n")
 
-	header := fmt.Sprintf("  %-18s %-10s %-14s %-8s %s", "SERVICE", "TYPE", "HEALTH", "PID", "UPTIME")
-	b.WriteString(headerStyle.Render(header))
+	// The VERSION column appears only when something declares a
+	// version_command (D26); otherwise the list is exactly as it was.
+	withVersion := false
+	for _, s := range m.statuses {
+		if s.HasVersionCommand {
+			withVersion = true
+			break
+		}
+	}
+	format := listRowFormat(withVersion)
+
+	headerCols := []any{"SERVICE", "TYPE", "HEALTH", "PID", "UPTIME"}
+	if withVersion {
+		headerCols = append(headerCols, "VERSION")
+	}
+	b.WriteString(headerStyle.Render(fmt.Sprintf(format, headerCols...)))
 	b.WriteString("\n")
 
 	if len(m.statuses) == 0 {
@@ -249,9 +263,14 @@ func (m model) listView() string {
 		if s.Drift {
 			health += "*"
 		}
-		line := fmt.Sprintf("  %-18s %-10s %-14s %-8s %s",
+		cols := []any{
 			truncate(s.Name, 18), truncate(s.Type, 10),
-			truncate(health, 14), pid, dashTUI(s.Uptime))
+			truncate(health, 14), pid, dashTUI(s.Uptime),
+		}
+		if withVersion {
+			cols = append(cols, truncate(dashTUI(s.Version), 24))
+		}
+		line := fmt.Sprintf(format, cols...)
 		if i == m.cursor {
 			b.WriteString(selStyle.Render(truncate(strings.TrimPrefix(line, "  "), m.contentWidth())))
 		} else {
@@ -267,6 +286,15 @@ func (m model) listView() string {
 	}
 	b.WriteString(dimStyle.Render("↑/↓ move • u up • d down • b bounce • l logs • r refresh • q quit"))
 	return b.String()
+}
+
+// listRowFormat is the service-list row layout; uptime only needs a fixed
+// width when a VERSION column follows it.
+func listRowFormat(withVersion bool) string {
+	if withVersion {
+		return "  %-18s %-10s %-14s %-8s %-12s %s"
+	}
+	return "  %-18s %-10s %-14s %-8s %s"
 }
 
 func (m model) logsView() string {

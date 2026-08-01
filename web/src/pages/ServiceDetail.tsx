@@ -101,6 +101,7 @@ function StatusPanel({ svc }: { svc: ServiceStatus }) {
       <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
         <Item label="type" value={svc.type} />
         <Item label="label" value={svc.label} mono />
+        {svc.version && <Item label="version" value={svc.version} mono />}
         {svc.uptime && <Item label="uptime" value={svc.uptime} />}
         {svc.pid !== undefined && svc.pid > 0 && <Item label="pid" value={String(svc.pid)} mono />}
         {svc.last_exit !== undefined && (
@@ -363,6 +364,9 @@ function ShowPanel({ name }: { name: string }) {
               update[{i}] {u}
             </p>
           ))}
+          {resolved.version_command && (
+            <p className="mt-1 break-all font-mono text-dim">version {resolved.version_command}</p>
+          )}
           <table className="mt-2 w-full">
             <tbody>
               {resolved.env.map((e) => (

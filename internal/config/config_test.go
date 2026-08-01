@@ -286,3 +286,83 @@ services:
 		})
 	}
 }
+
+func TestParseVersionCommand(t *testing.T) {
+	cfg := parse(t, `
+services:
+  x:
+    command: /bin/true
+    version_command: "/usr/local/bin/tool --version"
+`)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	s := cfg.Services[0]
+	if !s.HasVersionCommand() {
+		t.Fatal("HasVersionCommand = false")
+	}
+	argv, err := s.ResolveVersionArgv()
+	if err != nil {
+		t.Fatalf("ResolveVersionArgv: %v", err)
+	}
+	if len(argv) != 2 || argv[0] != "/usr/local/bin/tool" || argv[1] != "--version" {
+		t.Fatalf("argv = %v", argv)
+	}
+}
+
+// Optionality (D26): omitting version_command is always valid and leaves the
+// Service reporting no opt-in. Whitespace-only counts as omitted, matching how
+// `command` is treated.
+func TestVersionCommandIsOptional(t *testing.T) {
+	cfg := parse(t, `
+services:
+  x:
+    command: /bin/true
+  y:
+    type: scheduled
+    command: /bin/true
+    schedule: { interval: 6h }
+  z:
+    command: /bin/true
+    version_command: "   "
+`)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	for _, s := range cfg.Services {
+		if s.HasVersionCommand() {
+			t.Fatalf("service %q reports a version_command it never declared", s.Name)
+		}
+	}
+}
+
+func TestValidateVersionCommandErrors(t *testing.T) {
+	cases := map[string]string{
+		// Scheduled Services are idle by definition, so the live-process
+		// display rule would silently show nothing forever (ADR-0007).
+		"scheduled service": `
+services:
+  x:
+    type: scheduled
+    command: /bin/true
+    schedule: { interval: 6h }
+    version_command: /bin/true --version
+`,
+		"unterminated quote": `
+services:
+  x:
+    command: /bin/true
+    version_command: "/bin/tool 'oops"
+`,
+	}
+	for name, y := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := parse(t, y)
+			if err := cfg.Validate(); err == nil {
+				t.Fatal("expected validation error")
+			} else if !strings.Contains(err.Error(), "version_command") {
+				t.Fatalf("error not about version_command: %v", err)
+			}
+		})
+	}
+}

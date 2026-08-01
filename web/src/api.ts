@@ -29,6 +29,10 @@ export interface ServiceStatus {
   port_listening?: boolean;
   has_update: boolean;
   updating: boolean;
+  has_version_command: boolean;
+  // Present only while the cached capture still belongs to the live process
+  // (D26); absent entirely for services declaring no version_command.
+  version?: string;
 }
 
 export interface ServicePlan {
@@ -48,7 +52,7 @@ export interface Plan {
 
 export interface Finding {
   service?: string;
-  severity: "error" | "warning";
+  severity: "error" | "warning" | "info";
   problem: string;
   fix: string;
 }
@@ -70,6 +74,7 @@ export interface Resolved {
   env: ShownEnv[];
   update?: string[];
   update_timeout?: string;
+  version_command?: string;
 }
 
 export interface Meta {

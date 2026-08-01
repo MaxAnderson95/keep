@@ -44,6 +44,7 @@ function ServiceCard({ svc }: { svc: ServiceStatus }) {
               {svc.port_listening === false && " ✗"}
             </span>
           )}
+          {svc.version && <span className="truncate font-mono">{svc.version}</span>}
           {svc.drift && <span className="font-medium text-amber-400">drift</span>}
         </div>
       </Link>

@@ -55,7 +55,20 @@ func printDiff(c *cli.Context, plan keep.Plan) {
 func printStatus(c *cli.Context, statuses []keep.ServiceStatus) {
 	w := c.App.Writer
 	t := newTable(w)
-	t.row("SERVICE", "TYPE", "HEALTH", "PID", "UPTIME", "LAST EXIT", "PORT")
+	// The VERSION column exists only when something declares a version_command
+	// (D26), so a Config that uses none prints exactly the table it always did.
+	showVersion := false
+	for _, s := range statuses {
+		if s.HasVersionCommand {
+			showVersion = true
+			break
+		}
+	}
+	header := []string{"SERVICE", "TYPE", "HEALTH", "PID", "UPTIME", "LAST EXIT", "PORT"}
+	if showVersion {
+		header = append(header, "VERSION")
+	}
+	t.row(header...)
 	for _, s := range statuses {
 		pid := "-"
 		if s.PID > 0 {
@@ -79,16 +92,20 @@ func printStatus(c *cli.Context, statuses []keep.ServiceStatus) {
 		if s.Drift {
 			health += " (drift)"
 		}
-		t.row(s.Name, s.Type, health, pid, dash(s.Uptime), exit, port)
+		cols := []string{s.Name, s.Type, health, pid, dash(s.Uptime), exit, port}
+		if showVersion {
+			cols = append(cols, dash(s.Version))
+		}
+		t.row(cols...)
 	}
 	t.flush()
 }
 
 func printShow(c *cli.Context, r keep.Resolved) {
 	w := c.App.Writer
-	// %-15s fits the widest label (update_timeout:) so values align.
+	// %-17s fits the widest label (version_command:) so values align.
 	row := func(label, value string) {
-		fmt.Fprintf(w, "%-15s %s\n", label, value)
+		fmt.Fprintf(w, "%-17s %s\n", label, value)
 	}
 	row("service:", r.Name)
 	row("type:", r.Type)
@@ -109,6 +126,9 @@ func printShow(c *cli.Context, r keep.Resolved) {
 	}
 	if r.UpdateTimeout != "" {
 		row("update_timeout:", r.UpdateTimeout)
+	}
+	if r.VersionCommand != "" {
+		row("version_command:", r.VersionCommand)
 	}
 	if len(r.Env) == 0 {
 		fmt.Fprintln(w, "environment: (none contributed by keep)")

@@ -53,6 +53,7 @@ https://guazpmaxagentreports.z13.web.core.windows.net/background-service-manager
 | D23 | **Log rotation: opportunistic, on keep invocations** | Paths `~/Library/Logs/keep/<name>.{out,err}.log` (global `log_dir` overridable). Rotation off by default; when enabled (size/age thresholds), keep rotates oversized logs whenever you run a command — no scheduled job. Caveat: an untouched resident grows between invocations. Mechanism (copytruncate vs rotate+reopen) settled at build due to the held file handle. |
 | D24 | **`--json` on status / diff / show (+ apply summary)** | Read/inspect commands emit structured JSON (scripting, agent workflows, TUI state layer); action verbs (up/down/bounce) stay human-text. |
 | D25 | **Rootless, `gui/$UID` domain** | All agents run in the per-user GUI launchd domain — no root/sudo — matching the existing setup's AnyConnect/EDR coexistence constraints. |
+| D26 | **Optional `version_command`, captured at fork, shown only for the live process** | A Service may declare `version_command`; `keep fork` runs it once before exec (5s cap, failures swallowed) and caches the first output line against the PID it is about to become. Every surface reads the cache — never the command — and shows it only when the cached PID and command still match. Rejected on scheduled Services. Declaring none leaves behavior and output unchanged. See [ADR-0007](./docs/adr/0007-version-captured-at-fork.md). |
 
 ## Environment & secrets model
 
@@ -86,7 +87,7 @@ the literal `env:` map (launchd has no ambient `~/.zshrc` environment at fork to
 - `keep up` / `keep down` / `keep bounce` — see D9.
 - `keep update <svc>` — exactly one service: Down, run its declared update commands, restore
   the prior state on success; failure leaves a hold. See [docs/prd-update.md](./docs/prd-update.md).
-- `keep status [--all]` — state per service (running / idle / held / drifted), PID, uptime, last exit; optional port-listening check via a `port:` hint.
+- `keep status [--all]` — state per service (running / idle / held / drifted), PID, uptime, last exit; optional port-listening check via a `port:` hint; the running version for services declaring a `version_command:` (D26).
 - `keep logs [svc] [-f]` — tail one service, or all interleaved with name prefixes.
 
 **Interactive**
