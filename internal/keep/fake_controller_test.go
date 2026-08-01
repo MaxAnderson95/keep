@@ -1,6 +1,7 @@
 package keep
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -50,7 +51,7 @@ func (f *fakeController) Bootstrap(plistPath string) error {
 	return nil
 }
 
-func (f *fakeController) Bootout(label string) error {
+func (f *fakeController) Bootout(_ context.Context, label string) error {
 	f.calls = append(f.calls, "bootout "+label)
 	if err := f.fail["bootout "+label]; err != nil {
 		return err

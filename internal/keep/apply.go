@@ -2,12 +2,18 @@ package keep
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/MaxAnderson95/keep/internal/config"
 )
+
+// applyCtx bounds apply's teardown waits. Apply is a CLI-only operation with no
+// caller to cancel it — the web API exposes plan/diff, never apply — so it
+// leans on Bootout's own settle ceiling rather than taking a ctx of its own.
+func applyCtx() context.Context { return context.Background() }
 
 // ApplyResult summarizes what apply did (D24, apply --json).
 type ApplyResult struct {
@@ -54,7 +60,7 @@ func (m *Manager) Apply() (ApplyResult, error) {
 			if err := m.ctl.Disable(label); err != nil {
 				return res, fmt.Errorf("service %q: %w", s.Name, err)
 			}
-			if err := m.ctl.Bootout(label); err != nil {
+			if err := m.ctl.Bootout(applyCtx(), label); err != nil {
 				return res, fmt.Errorf("service %q: %w", s.Name, err)
 			}
 			res.DeclaredOff = append(res.DeclaredOff, s.Name)
@@ -95,7 +101,7 @@ func (m *Manager) Apply() (ApplyResult, error) {
 
 	// Prune orphans — only ever managed artifacts.
 	for _, rm := range plan.Removes {
-		if err := m.ctl.Bootout(rm.Label); err != nil {
+		if err := m.ctl.Bootout(applyCtx(), rm.Label); err != nil {
 			return res, fmt.Errorf("removing orphan %q: %w", rm.Label, err)
 		}
 		// Clear any stale disable record so a future Service with the same label
@@ -129,7 +135,7 @@ func (m *Manager) loadService(s *config.Service) error {
 // reloadService boots out the old job and bootstraps the regenerated plist.
 func (m *Manager) reloadService(s *config.Service) error {
 	label := s.EffectiveLabel()
-	if err := m.ctl.Bootout(label); err != nil {
+	if err := m.ctl.Bootout(applyCtx(), label); err != nil {
 		return err
 	}
 	return m.loadService(s)

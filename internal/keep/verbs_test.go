@@ -1,6 +1,9 @@
 package keep
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestDownPersistentlyHolds(t *testing.T) {
 	cfg := mustParse(t, oneResident(t))
@@ -9,7 +12,7 @@ func TestDownPersistentlyHolds(t *testing.T) {
 	if _, err := m.Apply(); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Down(&cfg.Services[0]); err != nil {
+	if err := m.Down(context.Background(), &cfg.Services[0]); err != nil {
 		t.Fatal(err)
 	}
 	if !ctl.disabled["keep.web"] {

@@ -107,7 +107,7 @@ func (m *Manager) Update(ctx context.Context, s *config.Service, out io.Writer) 
 	wasDown := disabled[s.EffectiveLabel()] || !s.IsEnabled()
 
 	fmt.Fprintf(w, "==> down %s\n", s.Name)
-	if err := m.Down(s); err != nil {
+	if err := m.Down(ctx, s); err != nil {
 		return fail(fmt.Errorf("down: %w", err))
 	}
 

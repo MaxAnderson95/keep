@@ -99,7 +99,9 @@ func cmdUp(bi BuildInfo) *cli.Command {
 
 func cmdDown(bi BuildInfo) *cli.Command {
 	return verbCommand(bi, "down", "persistently hold a service down (survives reboot and apply)", func(m *keep.Manager, s *config.Service) error {
-		return m.Down(s)
+		// A CLI down is the caller: it waits out the drain, bounded by
+		// Bootout's own settle ceiling.
+		return m.Down(context.Background(), s)
 	})
 }
 

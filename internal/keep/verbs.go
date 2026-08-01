@@ -1,6 +1,7 @@
 package keep
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/MaxAnderson95/keep/internal/config"
@@ -49,13 +50,14 @@ func (m *Manager) Up(s *config.Service) error {
 }
 
 // Down persistently holds a Service down: disable + bootout. It stays down
-// across reboot and apply until Up (ADR-0003).
-func (m *Manager) Down(s *config.Service) error {
+// across reboot and apply until Up (ADR-0003). It returns once the Service has
+// actually stopped, so ctx is what bounds a caller that cannot wait that long.
+func (m *Manager) Down(ctx context.Context, s *config.Service) error {
 	label := s.EffectiveLabel()
 	if err := m.ctl.Disable(label); err != nil {
 		return err
 	}
-	return m.ctl.Bootout(label)
+	return m.ctl.Bootout(ctx, label)
 }
 
 // Bounce restarts a running Service in place (kickstart -k).
