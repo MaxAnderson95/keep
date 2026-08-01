@@ -96,7 +96,11 @@ func (s *Server) handleVerb(verb string) http.HandlerFunc {
 		case "up":
 			err = o.Up(svc)
 		case "down":
-			err = o.Down(svc)
+			// Down returns only once the Service has actually stopped, so a
+			// slow drain would otherwise pin this request to it. The request
+			// context bounds that: a client that gives up, or a server
+			// shutdown, ends the wait.
+			err = o.Down(r.Context(), svc)
 		case "bounce":
 			err = o.Bounce(svc)
 		}

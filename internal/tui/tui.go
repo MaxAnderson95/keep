@@ -4,6 +4,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -155,7 +156,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "u":
 		return m.verb(m.mgr.Up)
 	case "d":
-		return m.verb(m.mgr.Down)
+		return m.verb(func(s *config.Service) error {
+			return m.mgr.Down(context.Background(), s)
+		})
 	case "b":
 		return m.verb(m.mgr.Bounce)
 	case "l", "enter":

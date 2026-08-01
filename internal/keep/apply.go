@@ -2,6 +2,7 @@ package keep
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,6 +23,10 @@ type ApplyResult struct {
 // Apply reconciles live launchd state to the Config (ADR-0001). It creates,
 // updates, and prunes managed Services, respects holds, and never touches
 // unmanaged jobs.
+//
+// Apply is CLI-only — the web API exposes plan and diff, never apply — so it
+// has no caller to cancel it: the Bootout calls below pass context.Background()
+// and lean on Bootout's own settle ceiling.
 func (m *Manager) Apply() (ApplyResult, error) {
 	plan, err := m.ComputePlan()
 	if err != nil {
@@ -54,7 +59,7 @@ func (m *Manager) Apply() (ApplyResult, error) {
 			if err := m.ctl.Disable(label); err != nil {
 				return res, fmt.Errorf("service %q: %w", s.Name, err)
 			}
-			if err := m.ctl.Bootout(label); err != nil {
+			if err := m.ctl.Bootout(context.Background(), label); err != nil {
 				return res, fmt.Errorf("service %q: %w", s.Name, err)
 			}
 			res.DeclaredOff = append(res.DeclaredOff, s.Name)
@@ -95,7 +100,7 @@ func (m *Manager) Apply() (ApplyResult, error) {
 
 	// Prune orphans — only ever managed artifacts.
 	for _, rm := range plan.Removes {
-		if err := m.ctl.Bootout(rm.Label); err != nil {
+		if err := m.ctl.Bootout(context.Background(), rm.Label); err != nil {
 			return res, fmt.Errorf("removing orphan %q: %w", rm.Label, err)
 		}
 		// Clear any stale disable record so a future Service with the same label
@@ -129,7 +134,7 @@ func (m *Manager) loadService(s *config.Service) error {
 // reloadService boots out the old job and bootstraps the regenerated plist.
 func (m *Manager) reloadService(s *config.Service) error {
 	label := s.EffectiveLabel()
-	if err := m.ctl.Bootout(label); err != nil {
+	if err := m.ctl.Bootout(context.Background(), label); err != nil {
 		return err
 	}
 	return m.loadService(s)

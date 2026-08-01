@@ -1,10 +1,12 @@
 package launchd
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // CLI is the production Controller adapter: it shells out to launchctl (and ps
@@ -43,8 +45,31 @@ func (c *CLI) Bootstrap(plistPath string) error {
 	return nil
 }
 
-// Bootout unloads a service by label (idempotent: not-loaded is success).
-func (c *CLI) Bootout(label string) error {
+// bootoutSettleTimeout bounds how long Bootout waits for launchd to finish a
+// teardown, and bootoutPollInterval is how often it re-checks. launchd itself
+// SIGKILLs a job that overruns its ExitTimeOut (20s unless the plist says
+// otherwise), so the ceiling only trips when launchd is wedged. Variables for
+// tests.
+var (
+	bootoutSettleTimeout = 30 * time.Second
+	bootoutPollInterval  = 50 * time.Millisecond
+)
+
+// Bootout unloads a service by label and waits for the teardown to finish
+// (idempotent: not-loaded is success).
+//
+// `launchctl bootout` returns once it has signalled the job, not once the job
+// is gone: a service that drains on SIGTERM stays in the domain in state
+// "SIGTERMed" until it exits. Bootstrapping that label inside the window fails
+// with "5: Input/output error", so every caller that stops a service in order
+// to start it again — Down/Up around `update`, reloadService in `apply` — would
+// race launchd and leave the Service down. Settling here is what makes Bootout
+// mean what its name says for all of them.
+//
+// ctx bounds the wait, not the unload: by the time it can be canceled launchd
+// has already been told to stop the service, so cancellation abandons the
+// watch rather than undoing anything.
+func (c *CLI) Bootout(ctx context.Context, label string) error {
 	out, err := c.run("bootout", Target(label))
 	if err != nil {
 		if strings.Contains(out, "No such process") || strings.Contains(out, "Could not find") {
@@ -52,7 +77,30 @@ func (c *CLI) Bootout(label string) error {
 		}
 		return fmt.Errorf("bootout %s: %s", label, strings.TrimSpace(out))
 	}
-	return nil
+	return c.waitBootedOut(ctx, label)
+}
+
+// waitBootedOut polls until the label is no longer in the domain. An
+// unreadable domain ends the wait rather than failing it: the caller asked to
+// stop a service, and a broken `print` is no reason to report that the stop
+// failed.
+func (c *CLI) waitBootedOut(ctx context.Context, label string) error {
+	deadline := time.Now().Add(bootoutSettleTimeout)
+	for {
+		info, err := c.Info(label)
+		if err != nil || !info.Loaded {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("bootout %s: still tearing down after %s (state %q)",
+				label, bootoutSettleTimeout, info.State)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("bootout %s: %w (state %q)", label, ctx.Err(), info.State)
+		case <-time.After(bootoutPollInterval):
+		}
+	}
 }
 
 // Enable clears any persistent disable for the service (reverses Disable).

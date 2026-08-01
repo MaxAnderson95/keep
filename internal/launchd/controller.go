@@ -1,5 +1,7 @@
 package launchd
 
+import "context"
+
 // Controller is the seam over the live launchd domain (gui/$UID): the launchctl
 // operations keep performs and the state it reads back. It deals in parsed
 // results (PrintInfo, the disabled set), not raw launchctl text, so callers and
@@ -12,8 +14,13 @@ package launchd
 type Controller interface {
 	// Bootstrap loads a plist into the domain (idempotent).
 	Bootstrap(plistPath string) error
-	// Bootout unloads a service by label (idempotent).
-	Bootout(label string) error
+	// Bootout unloads a service by label and does not return until the
+	// teardown has completed, so the label is free to bootstrap again
+	// (idempotent). It is the one operation here that waits on the service
+	// rather than on launchctl, so it is the one that takes a ctx: a caller
+	// serving an HTTP request or a canceled update abandons the wait instead
+	// of being pinned to another process's shutdown.
+	Bootout(ctx context.Context, label string) error
 	// Enable clears a persistent disable for the label (reverses Disable).
 	Enable(label string) error
 	// Disable persistently disables the label (survives reboot and apply).

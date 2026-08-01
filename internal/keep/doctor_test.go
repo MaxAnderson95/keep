@@ -1,6 +1,7 @@
 package keep
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -108,7 +109,7 @@ func TestDoctorNotLoaded(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Boot it out behind keep's back.
-	m.ctl.(*fakeController).Bootout("keep.web")
+	m.ctl.(*fakeController).Bootout(context.Background(), "keep.web")
 	findings, err := m.Doctor()
 	if err != nil {
 		t.Fatal(err)

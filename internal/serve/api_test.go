@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MaxAnderson95/keep/internal/config"
 	"github.com/MaxAnderson95/keep/internal/keep"
@@ -19,12 +20,13 @@ import (
 
 // fakeOrch is a test double for the orchestrator seam.
 type fakeOrch struct {
-	services  []config.Service
-	logDir    string
-	calls     []string
-	verbErr   error
-	updating  bool  // UpdateInProgress answer
-	updateErr error // Update failure to inject
+	services   []config.Service
+	logDir     string
+	calls      []string
+	verbErr    error
+	updating   bool  // UpdateInProgress answer
+	updateErr  error // Update failure to inject
+	downBlocks bool  // Down waits on ctx instead of returning
 }
 
 func (f *fakeOrch) Targets(names []string) ([]*config.Service, error) {
@@ -68,8 +70,12 @@ func (f *fakeOrch) Up(s *config.Service) error {
 	return f.verbErr
 }
 
-func (f *fakeOrch) Down(s *config.Service) error {
+func (f *fakeOrch) Down(ctx context.Context, s *config.Service) error {
 	f.calls = append(f.calls, "down "+s.Name)
+	if f.downBlocks {
+		<-ctx.Done() // model a drain the caller has to wait out
+		return ctx.Err()
+	}
 	return f.verbErr
 }
 
@@ -290,6 +296,36 @@ func TestVerbsExecuteAndReturnStatus(t *testing.T) {
 	}
 	if len(f.calls) != 1 || f.calls[0] != "up opencode" {
 		t.Fatalf("orchestrator calls = %v", f.calls)
+	}
+}
+
+// Down blocks until the Service has really stopped, so the handler must hand
+// it the request context — otherwise a slow drain pins the request even after
+// the client has gone away or the server is shutting down.
+func TestDownStopsWaitingWhenTheRequestIsCanceled(t *testing.T) {
+	f := fakeWith("opencode")
+	f.downBlocks = true
+	h := testServer(t, f, "").Handler()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest("POST", "/api/v1/services/opencode/down", nil).WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer sekrit-token")
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		done <- rec
+	}()
+
+	cancel()
+	select {
+	case rec := <-done:
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("canceled down = %d, want 500 with the cancellation reported", rec.Code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler never returned: the request context is not reaching Down")
 	}
 }
 

@@ -15,7 +15,7 @@ type orchestrator interface {
 	Targets(names []string) ([]*config.Service, error)
 	Status(names []string) ([]keep.ServiceStatus, error)
 	Up(s *config.Service) error
-	Down(s *config.Service) error
+	Down(ctx context.Context, s *config.Service) error
 	Bounce(s *config.Service) error
 	Update(ctx context.Context, s *config.Service, out io.Writer) (keep.UpdateResult, error)
 	UpdateInProgress(s *config.Service) bool
