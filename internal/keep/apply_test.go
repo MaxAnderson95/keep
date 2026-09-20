@@ -3,8 +3,11 @@ package keep
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func oneResident(t *testing.T) string {
@@ -184,4 +187,98 @@ func TestApplyPrunesOrphanOnlyIfManaged(t *testing.T) {
 	if _, err := os.Stat(unmanagedPath); err != nil {
 		t.Error("unmanaged artifact must never be touched")
 	}
+}
+
+// The artifacts are keep's only record that an orphan exists. If they were
+// deleted and Forget then failed, the next apply would find nothing to prune
+// and report success while the Service kept running.
+func TestApplyRestoresOrphanArtifactsWhenForgetFails(t *testing.T) {
+	cfg := mustParse(t, oneResident(t))
+	rt := newTestRuntime(t)
+	m := testManager(t, cfg, rt)
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	orphanPath := artifactPath(t, m, &cfg.Services[0])
+
+	// Drop the Service from the Config, then fail the runtime's cleanup.
+	m.Cfg.Services = m.Cfg.Services[:0]
+	rt.fail["forget keep.web"] = errors.New("bootout failed")
+
+	res, err := m.Apply()
+	if err == nil || !strings.Contains(err.Error(), "bootout failed") {
+		t.Fatalf("expected the forget error, got %v", err)
+	}
+	if len(res.Removed) != 0 {
+		t.Errorf("Removed = %v, want none: nothing was successfully removed", res.Removed)
+	}
+	if _, err := os.Stat(orphanPath); err != nil {
+		t.Fatalf("artifact must be restored so the next apply can retry: %v", err)
+	}
+
+	// With the runtime healthy again, the retry finds and prunes the orphan.
+	delete(rt.fail, "forget keep.web")
+	res, err = m.Apply()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Removed) != 1 || res.Removed[0] != "web" {
+		t.Fatalf("retry Removed = %v, want [web]", res.Removed)
+	}
+	if _, ok := rt.units["keep.web"]; ok {
+		t.Error("the orphan should be stopped on the retry")
+	}
+	if _, err := os.Stat(orphanPath); !os.IsNotExist(err) {
+		t.Error("artifact should be gone after the successful retry")
+	}
+}
+
+// The artifact directory is shared with whatever else the user keeps there.
+// Reading a FIFO with no writer blocks forever, so the scan must not open
+// anything that is not a regular file.
+func TestScanSkipsSpecialFiles(t *testing.T) {
+	cfg := mustParse(t, oneResident(t))
+	rt := newTestRuntime(t)
+	m := testManager(t, cfg, rt)
+	if err := syscall.Mkfifo(filepath.Join(m.ArtifactDir(), "unrelated.pipe"), 0o644); err != nil {
+		t.Skipf("cannot create a FIFO here: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := m.ComputePlan()
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ComputePlan: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("ComputePlan blocked on a FIFO in the artifact directory")
+	}
+}
+
+// A symlink to a real artifact is still a real artifact.
+func TestScanFollowsSymlinkedArtifacts(t *testing.T) {
+	cfg := mustParse(t, oneResident(t))
+	m := testManager(t, cfg, newTestRuntime(t))
+	target := filepath.Join(t.TempDir(), "elsewhere.unit")
+	if err := os.WriteFile(target, fakeArtifact("keep.linked", "linked", "/opt/keep/bin/keep", ""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(m.ArtifactDir(), "keep.linked.unit")); err != nil {
+		t.Fatal(err)
+	}
+
+	managed, err := m.ScanManaged()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range managed {
+		if a.Service == "linked" {
+			return
+		}
+	}
+	t.Fatalf("symlinked artifact not found in scan: %+v", managed)
 }

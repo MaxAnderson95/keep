@@ -29,10 +29,15 @@ func (m *Manager) ScanManaged() ([]ManagedArtifact, error) {
 	}
 	var found []ManagedArtifact
 	for _, e := range entries {
-		if e.IsDir() {
+		path := filepath.Join(dir, e.Name())
+		// Regular files only, resolved through symlinks. Without the old
+		// extension filter there is nothing else standing between the scan and
+		// whatever shares the directory, and reading a FIFO with no writer
+		// would block apply, diff, and doctor forever.
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
-		path := filepath.Join(dir, e.Name())
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue

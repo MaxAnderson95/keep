@@ -114,7 +114,10 @@ func (m *Manager) Apply() (ApplyResult, error) {
 
 // prune removes orphaned Services: the artifact files go first, so a runtime
 // that re-reads disk while forgetting the label does not find them still
-// there.
+// there. A failed Forget puts them back, because those files are the only
+// record that lets the next apply rediscover the orphan — without the restore,
+// a runtime error here would leave a Service running that keep could never see
+// again.
 func (m *Manager) prune(removes []ServicePlan) ([]string, error) {
 	if len(removes) == 0 {
 		return nil, nil
@@ -132,6 +135,7 @@ func (m *Manager) prune(removes []ServicePlan) ([]string, error) {
 			}
 		}
 		if err := m.rt.Forget(context.Background(), rm.Label); err != nil {
+			restore(byLabel[rm.Label])
 			return removed, fmt.Errorf("removing orphan %q: %w", rm.Label, err)
 		}
 		removed = append(removed, rm.Name)
@@ -157,6 +161,16 @@ func (m *Manager) reloadService(s *config.Service) error {
 		return err
 	}
 	return m.loadService(s)
+}
+
+// restore puts scanned artifacts back after a failed prune. Best-effort: the
+// error that triggered the restore is the one worth reporting, and a write
+// that fails here leaves exactly the state the caller is already being told
+// about.
+func restore(artifacts []ManagedArtifact) {
+	for _, a := range artifacts {
+		_ = os.WriteFile(a.Path, a.Data, 0o644)
+	}
 }
 
 func writeIfChanged(path string, data []byte) error {
