@@ -33,7 +33,7 @@ func cmdVersion(bi BuildInfo) *cli.Command {
 func cmdApply(bi BuildInfo) *cli.Command {
 	return &cli.Command{
 		Name:  "apply",
-		Usage: "reconcile live launchd state to the Config",
+		Usage: "reconcile live runtime state to the Config",
 		Flags: []cli.Flag{jsonFlag()},
 		Action: func(c *cli.Context) error {
 			mgr, err := manager(c, bi)
@@ -79,7 +79,7 @@ func cmdDiff(bi BuildInfo) *cli.Command {
 func cmdValidate(bi BuildInfo) *cli.Command {
 	return &cli.Command{
 		Name:  "validate",
-		Usage: "check the Config for errors without touching launchd",
+		Usage: "check the Config for errors without touching the runtime",
 		Action: func(c *cli.Context) error {
 			// Load performs validation; report and exit non-zero on failure.
 			if _, err := config.Load(configPath(c)); err != nil {
@@ -183,7 +183,7 @@ func verbCommand(bi BuildInfo, name, usage string, fn func(*keep.Manager, *confi
 func cmdStatus(bi BuildInfo) *cli.Command {
 	return &cli.Command{
 		Name:      "status",
-		Usage:     "show service state from launchd",
+		Usage:     "show service state",
 		ArgsUsage: "[service...]",
 		Flags: []cli.Flag{
 			jsonFlag(),
@@ -316,9 +316,9 @@ func cmdDoctor(bi BuildInfo) *cli.Command {
 func cmdFork(bi BuildInfo) *cli.Command {
 	return &cli.Command{
 		Name:      "fork",
-		Usage:     "internal launchd launcher (do not run by hand)",
+		Usage:     "internal launcher (do not run by hand)",
 		ArgsUsage: "<service>",
-		Hidden:    true, // launchd-only (ADR-0002)
+		Hidden:    true, // started by the runtime, never by hand (ADR-0002)
 		Action: func(c *cli.Context) error {
 			if c.Args().Len() != 1 {
 				return cli.Exit("fork requires exactly one service name", 2)

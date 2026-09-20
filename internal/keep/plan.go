@@ -1,6 +1,10 @@
 package keep
 
-import "bytes"
+import (
+	"bytes"
+	"path/filepath"
+	"strings"
+)
 
 // ChangeKind is what apply would do to a Service's generated artifact.
 type ChangeKind string
@@ -49,17 +53,19 @@ func (p Plan) HasDrift() bool {
 	return len(p.Removes) > 0
 }
 
-// ComputePlan diffs the Config against live launchd state without mutating it.
+// ComputePlan diffs the Config against live runtime state without mutating it.
+// A Service's artifacts roll up into one entry: whatever the runtime renders
+// for it, keep plans and applies it as a single Service.
 func (m *Manager) ComputePlan() (Plan, error) {
 	managed, err := m.ScanManaged()
 	if err != nil {
 		return Plan{}, err
 	}
-	byService := map[string]ManagedArtifact{}
+	byPath := map[string]ManagedArtifact{}
 	for _, a := range managed {
-		byService[a.Service] = a
+		byPath[a.Path] = a
 	}
-	disabled, err := m.ctl.DisabledSet()
+	held, err := m.rt.Held()
 	if err != nil {
 		return Plan{}, err
 	}
@@ -68,33 +74,42 @@ func (m *Manager) ComputePlan() (Plan, error) {
 	for i := range m.Cfg.Services {
 		s := &m.Cfg.Services[i]
 		label := s.EffectiveLabel()
-		desired, err := m.PlistBytes(s)
+		desired, err := m.Artifacts(s)
 		if err != nil {
 			return Plan{}, err
 		}
 		sp := ServicePlan{Name: s.Name, Label: label}
 
-		artifact, exists := byService[s.Name]
+		var missing, differing []string
+		for _, a := range desired {
+			switch existing, ok := byPath[a.Path]; {
+			case !ok:
+				missing = append(missing, filepath.Base(a.Path))
+			case !bytes.Equal(existing.Data, a.Data):
+				differing = append(differing, filepath.Base(a.Path))
+			}
+		}
 		switch {
-		case !exists:
+		case len(missing) > 0:
 			sp.Kind = ChangeAdd
-			sp.Reason = "no generated artifact yet"
-		case !bytes.Equal(artifact.Data, desired):
+			sp.Reason = "no generated artifact yet: " + strings.Join(missing, ", ")
+		case len(differing) > 0:
 			sp.Kind = ChangeUpdate
-			sp.Reason = "generated artifact differs from Config (changed or hand-edited)"
+			sp.Reason = "generated artifact differs from Config (changed or hand-edited): " +
+				strings.Join(differing, ", ")
 		default:
 			sp.Kind = ChangeNoop
 		}
 
-		isDisabled := disabled[label]
+		isHeld := held[label]
 		switch {
 		case !s.IsEnabled():
 			sp.DeclaredOff = true
-			if exists && !isDisabled {
+			if len(missing) == 0 && !isHeld {
 				sp.DisabledDrift = true
 				sp.Reason = appendReason(sp.Reason, "declared off but currently enabled")
 			}
-		case isDisabled:
+		case isHeld:
 			sp.Held = true
 			sp.Reason = appendReason(sp.Reason, "held down (declared enabled, currently disabled)")
 		}
@@ -102,10 +117,11 @@ func (m *Manager) ComputePlan() (Plan, error) {
 		plan.Services = append(plan.Services, sp)
 	}
 
-	for _, a := range m.orphans(managed) {
+	labels, byLabel := m.orphanLabels(managed)
+	for _, label := range labels {
 		plan.Removes = append(plan.Removes, ServicePlan{
-			Name:   a.Service,
-			Label:  a.Label,
+			Name:   byLabel[label][0].Service,
+			Label:  label,
 			Kind:   ChangeRemove,
 			Reason: "managed artifact no longer in Config",
 		})

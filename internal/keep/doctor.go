@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/MaxAnderson95/keep/internal/config"
-	"github.com/MaxAnderson95/keep/internal/launchd"
+	"github.com/MaxAnderson95/keep/internal/runtime"
 )
 
 // Severity classifies a doctor finding.
@@ -34,7 +35,7 @@ func (m *Manager) Doctor() ([]Finding, error) {
 	if err != nil {
 		return nil, err
 	}
-	disabled, err := m.ctl.DisabledSet()
+	held, err := m.rt.Held()
 	if err != nil {
 		return nil, err
 	}
@@ -91,64 +92,35 @@ func (m *Manager) Doctor() ([]Finding, error) {
 			}
 		}
 
-		// Plist presence / hand-edit / stale path.
-		path := m.PlistPath(s)
-		desired, derr := m.PlistBytes(s)
+		// Artifact presence / hand-edit / stale path.
+		desired, derr := m.Artifacts(s)
 		if derr != nil {
 			return nil, derr
 		}
-		existing, rerr := os.ReadFile(path)
-		switch {
-		case os.IsNotExist(rerr):
-			if s.IsEnabled() {
-				findings = append(findings, Finding{
-					Service:  s.Name,
-					Severity: SevWarn,
-					Problem:  "no generated artifact on disk",
-					Fix:      "run `keep apply`",
-				})
-			}
-		case rerr == nil:
-			if !bytes.Equal(existing, desired) {
-				findings = append(findings, Finding{
-					Service:  s.Name,
-					Severity: SevWarn,
-					Problem:  "generated artifact differs from Config (hand-edited or stale)",
-					Fix:      "run `keep apply` to regenerate it",
-				})
-			}
-			if kp := launchd.ReadMarkers(existing).KeepPath; kp != "" && kp != m.KeepPath {
-				findings = append(findings, Finding{
-					Service:  s.Name,
-					Severity: SevWarn,
-					Problem:  fmt.Sprintf("artifact pins a stale keep path %q (current: %q)", kp, m.KeepPath),
-					Fix:      "run `keep apply` to re-pin the current keep binary path",
-				})
-			}
-		}
+		findings = append(findings, m.artifactFindings(s, desired)...)
 
-		// Error / drift states from live launchd.
-		info, ierr := m.ctl.Info(label)
+		// Error / drift states from the live runtime.
+		info, ierr := m.rt.Info(m.target(s))
 		if ierr == nil {
-			if info.Loaded && info.HasLastExit && info.LastExit != 0 {
+			if info.Known() && failedExit(info) {
 				findings = append(findings, Finding{
 					Service:  s.Name,
 					Severity: SevWarn,
-					Problem:  fmt.Sprintf("last exit code was %d", info.LastExit),
+					Problem:  fmt.Sprintf("last exit code was %d", *info.LastExit),
 					Fix:      "check `keep logs " + s.Name + "` for the failure",
 				})
 			}
-			if s.IsEnabled() && !disabled[label] && !info.Loaded {
+			if s.IsEnabled() && !held[label] && !info.Known() {
 				findings = append(findings, Finding{
 					Service:  s.Name,
 					Severity: SevWarn,
-					Problem:  "declared enabled but not loaded in launchd",
+					Problem:  "declared enabled but not loaded in the runtime",
 					Fix:      "run `keep apply` or `keep up " + s.Name + "`",
 				})
 			}
 			findings = append(findings, m.versionCaptureFindings(s, info)...)
 		}
-		if s.IsEnabled() && disabled[label] {
+		if s.IsEnabled() && held[label] {
 			findings = append(findings, Finding{
 				Service:  s.Name,
 				Severity: SevWarn,
@@ -162,12 +134,50 @@ func (m *Manager) Doctor() ([]Finding, error) {
 	return findings, nil
 }
 
+// artifactFindings checks each file the runtime renders for a Service against
+// what is on disk.
+func (m *Manager) artifactFindings(s *config.Service, desired []runtime.Artifact) []Finding {
+	var findings []Finding
+	for _, a := range desired {
+		existing, rerr := os.ReadFile(a.Path)
+		switch {
+		case os.IsNotExist(rerr):
+			if s.IsEnabled() {
+				findings = append(findings, Finding{
+					Service:  s.Name,
+					Severity: SevWarn,
+					Problem:  "no generated artifact on disk: " + filepath.Base(a.Path),
+					Fix:      "run `keep apply`",
+				})
+			}
+		case rerr == nil:
+			if !bytes.Equal(existing, a.Data) {
+				findings = append(findings, Finding{
+					Service:  s.Name,
+					Severity: SevWarn,
+					Problem:  "generated artifact differs from Config (hand-edited or stale): " + filepath.Base(a.Path),
+					Fix:      "run `keep apply` to regenerate it",
+				})
+			}
+			if kp := m.rt.ReadMarkers(a.Path, existing).KeepPath; kp != "" && kp != m.KeepPath {
+				findings = append(findings, Finding{
+					Service:  s.Name,
+					Severity: SevWarn,
+					Problem:  fmt.Sprintf("artifact pins a stale keep path %q (current: %q)", kp, m.KeepPath),
+					Fix:      "run `keep apply` to re-pin the current keep binary path",
+				})
+			}
+		}
+	}
+	return findings
+}
+
 // versionCaptureFindings reports what the last start recorded for a Service's
 // version_command (D26). It returns nothing at all for a Service that declares
 // none, and nothing for one that is not currently running — a stopped Service
 // has no live version to be missing.
-func (m *Manager) versionCaptureFindings(s *config.Service, info launchd.PrintInfo) []Finding {
-	if !s.HasVersionCommand() || !isRunning(info) {
+func (m *Manager) versionCaptureFindings(s *config.Service, info runtime.Info) []Finding {
+	if !s.HasVersionCommand() || !info.Running() {
 		return nil
 	}
 	entry, found := m.ReadVersionEntry(s.Name)

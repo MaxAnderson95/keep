@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/MaxAnderson95/keep/internal/config"
+	"github.com/MaxAnderson95/keep/internal/runtime"
 )
 
 // Health is the rolled-up state keep reports for a Service.
@@ -17,7 +18,7 @@ const (
 	HealthHeld        Health = "held"         // down'd (intentional drift)
 	HealthDeclaredOff Health = "declared-off" // enabled: false
 	HealthStopped     Health = "stopped"      // resident, loaded but not running
-	HealthNotLoaded   Health = "not-loaded"   // enabled but no live job (drift)
+	HealthNotLoaded   Health = "not-loaded"   // enabled but the runtime does not know the unit (drift)
 	HealthError       Health = "error"        // last exit non-zero
 	HealthUpdating    Health = "updating"     // an update run holds the lock (U11)
 )
@@ -55,13 +56,13 @@ func (m *Manager) Status(names []string) ([]ServiceStatus, error) {
 	if err != nil {
 		return nil, err
 	}
-	disabled, err := m.ctl.DisabledSet()
+	held, err := m.rt.Held()
 	if err != nil {
 		return nil, err
 	}
 	out := make([]ServiceStatus, 0, len(targets))
 	for _, s := range targets {
-		st, err := m.statusOf(s, disabled)
+		st, err := m.statusOf(s, held)
 		if err != nil {
 			return nil, err
 		}
@@ -70,27 +71,24 @@ func (m *Manager) Status(names []string) ([]ServiceStatus, error) {
 	return out, nil
 }
 
-func (m *Manager) statusOf(s *config.Service, disabled map[string]bool) (ServiceStatus, error) {
+func (m *Manager) statusOf(s *config.Service, held map[string]bool) (ServiceStatus, error) {
 	label := s.EffectiveLabel()
-	info, err := m.ctl.Info(label)
+	info, err := m.rt.Info(m.target(s))
 	if err != nil {
 		return ServiceStatus{}, err
 	}
 	st := ServiceStatus{
-		Name:    s.Name,
-		Label:   label,
-		Type:    s.Type,
-		Enabled: s.IsEnabled(),
-		Loaded:  info.Loaded,
-		Port:    s.Port,
+		Name:     s.Name,
+		Label:    label,
+		Type:     s.Type,
+		Enabled:  s.IsEnabled(),
+		Loaded:   info.Known(),
+		LastExit: info.LastExit,
+		Port:     s.Port,
 	}
-	if info.HasPID {
+	if info.PID > 0 {
 		st.PID = info.PID
-		st.Uptime = m.ctl.Uptime(info.PID)
-	}
-	if info.HasLastExit {
-		v := info.LastExit
-		st.LastExit = &v
+		st.Uptime = m.rt.Uptime(info.PID)
 	}
 	st.HasUpdate = s.HasUpdate()
 	if st.HasUpdate {
@@ -106,30 +104,30 @@ func (m *Manager) statusOf(s *config.Service, disabled map[string]bool) (Service
 		st.DeclaredOff = true
 		st.Health = HealthDeclaredOff
 		// live-enabled while declared off is drift
-		if info.Loaded && !disabled[label] {
+		if info.Known() && !held[label] {
 			st.Drift = true
 		}
-	case disabled[label]:
+	case held[label]:
 		st.Held = true
 		st.Drift = true
 		st.Health = HealthHeld
 	case s.IsScheduled():
 		st.Health = HealthIdle
-		if info.HasLastExit && info.LastExit != 0 {
+		if failedExit(info) {
 			st.Health = HealthError
 		}
-		if !info.Loaded {
+		if !info.Known() {
 			st.Health = HealthNotLoaded
 			st.Drift = true
 		}
 	default: // resident, enabled, not held
 		switch {
-		case !info.Loaded:
+		case !info.Known():
 			st.Health = HealthNotLoaded
 			st.Drift = true
-		case isRunning(info):
+		case info.Running():
 			st.Health = HealthRunning
-		case info.HasLastExit && info.LastExit != 0:
+		case failedExit(info):
 			st.Health = HealthError
 			st.Drift = true
 		default:
@@ -142,16 +140,23 @@ func (m *Manager) statusOf(s *config.Service, disabled map[string]bool) (Service
 	// command itself only ever runs at fork — and stays empty unless the
 	// capture belongs to this exact live process.
 	st.HasVersionCommand = s.HasVersionCommand()
-	if st.HasVersionCommand && isRunning(info) {
+	if st.HasVersionCommand && info.Running() {
 		st.Version = m.LiveVersion(s, info.PID)
 	}
 
 	// Optional port-listening liveness check (D10, issue #9).
-	if s.Port > 0 && isRunning(info) {
+	if s.Port > 0 && info.Running() {
 		listening := portListening(s.Port)
 		st.PortListening = &listening
 	}
 	return st, nil
+}
+
+// failedExit reports whether the runtime recorded a non-zero exit for the
+// unit's last run. It is independent of State: a scheduled Service that failed
+// still reports the code once its next run is live.
+func failedExit(info runtime.Info) bool {
+	return info.LastExit != nil && *info.LastExit != 0
 }
 
 func portListening(port int) bool {

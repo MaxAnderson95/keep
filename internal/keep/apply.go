@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/MaxAnderson95/keep/internal/config"
 )
@@ -20,13 +19,13 @@ type ApplyResult struct {
 	DeclaredOff []string `json:"declared_off"` // generated but kept disabled
 }
 
-// Apply reconciles live launchd state to the Config (ADR-0001). It creates,
+// Apply reconciles live runtime state to the Config (ADR-0001). It creates,
 // updates, and prunes managed Services, respects holds, and never touches
-// unmanaged jobs.
+// unmanaged units.
 //
 // Apply is CLI-only — the web API exposes plan and diff, never apply — so it
-// has no caller to cancel it: the Bootout calls below pass context.Background()
-// and lean on Bootout's own settle ceiling.
+// has no caller to cancel it: the Unload calls below pass context.Background()
+// and lean on Unload's own settle ceiling.
 func (m *Manager) Apply() (ApplyResult, error) {
 	plan, err := m.ComputePlan()
 	if err != nil {
@@ -41,25 +40,27 @@ func (m *Manager) Apply() (ApplyResult, error) {
 	for i := range m.Cfg.Services {
 		s := &m.Cfg.Services[i]
 		sp := planByName[s.Name]
-		label := s.EffectiveLabel()
+		target := m.target(s)
 
 		if err := m.ensureLogDir(s); err != nil {
 			return res, fmt.Errorf("service %q: %w", s.Name, err)
 		}
-		desired, err := m.PlistBytes(s)
+		desired, err := m.Artifacts(s)
 		if err != nil {
 			return res, err
 		}
-		if err := writeIfChanged(m.PlistPath(s), desired); err != nil {
-			return res, fmt.Errorf("service %q: %w", s.Name, err)
+		for _, a := range desired {
+			if err := writeIfChanged(a.Path, a.Data); err != nil {
+				return res, fmt.Errorf("service %q: %w", s.Name, err)
+			}
 		}
 
 		// Declared off (enabled: false): generate but keep disabled. Not drift.
 		if !s.IsEnabled() {
-			if err := m.ctl.Disable(label); err != nil {
+			if err := m.rt.Hold(target); err != nil {
 				return res, fmt.Errorf("service %q: %w", s.Name, err)
 			}
-			if err := m.ctl.Bootout(context.Background(), label); err != nil {
+			if err := m.rt.Unload(context.Background(), target); err != nil {
 				return res, fmt.Errorf("service %q: %w", s.Name, err)
 			}
 			res.DeclaredOff = append(res.DeclaredOff, s.Name)
@@ -84,12 +85,12 @@ func (m *Manager) Apply() (ApplyResult, error) {
 				return res, err
 			}
 			res.Updated = append(res.Updated, s.Name)
-		default: // noop — ensure it is actually loaded
-			info, err := m.ctl.Info(label)
+		default: // noop — ensure the runtime actually knows about it
+			info, err := m.rt.Info(target)
 			if err != nil {
 				return res, err
 			}
-			if !info.Loaded {
+			if !info.Known() {
 				if err := m.loadService(s); err != nil {
 					return res, err
 				}
@@ -98,21 +99,10 @@ func (m *Manager) Apply() (ApplyResult, error) {
 		}
 	}
 
-	// Prune orphans — only ever managed artifacts.
-	for _, rm := range plan.Removes {
-		if err := m.ctl.Bootout(context.Background(), rm.Label); err != nil {
-			return res, fmt.Errorf("removing orphan %q: %w", rm.Label, err)
-		}
-		// Clear any stale disable record so a future Service with the same label
-		// does not inherit an old local hold.
-		if err := m.ctl.Enable(rm.Label); err != nil {
-			return res, fmt.Errorf("removing orphan %q: %w", rm.Label, err)
-		}
-		path := filepath.Join(m.LaunchAgentsDir(), rm.Label+".plist")
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return res, fmt.Errorf("removing orphan %q: %w", rm.Label, err)
-		}
-		res.Removed = append(res.Removed, rm.Name)
+	removed, err := m.prune(plan.Removes)
+	res.Removed = removed
+	if err != nil {
+		return res, err
 	}
 
 	// Drop cached versions that can no longer be displayed — removed Services
@@ -122,24 +112,48 @@ func (m *Manager) Apply() (ApplyResult, error) {
 	return res, nil
 }
 
-// loadService enables and bootstraps a Service so launchd tracks it.
-func (m *Manager) loadService(s *config.Service) error {
-	label := s.EffectiveLabel()
-	if err := m.ctl.Enable(label); err != nil {
-		return err
+// prune removes orphaned Services: the artifact files go first, so a runtime
+// that re-reads disk while forgetting the label does not find them still
+// there.
+func (m *Manager) prune(removes []ServicePlan) ([]string, error) {
+	if len(removes) == 0 {
+		return nil, nil
 	}
-	if err := m.ctl.Bootstrap(m.PlistPath(s)); err != nil {
-		return err
+	managed, err := m.ScanManaged()
+	if err != nil {
+		return nil, err
 	}
-	// Resident services carry RunAtLoad and start on bootstrap; scheduled
-	// services wait for their next fire. Nothing to kickstart here.
-	return nil
+	_, byLabel := m.orphanLabels(managed)
+	var removed []string
+	for _, rm := range removes {
+		for _, a := range byLabel[rm.Label] {
+			if err := os.Remove(a.Path); err != nil && !os.IsNotExist(err) {
+				return removed, fmt.Errorf("removing orphan %q: %w", rm.Label, err)
+			}
+		}
+		if err := m.rt.Forget(context.Background(), rm.Label); err != nil {
+			return removed, fmt.Errorf("removing orphan %q: %w", rm.Label, err)
+		}
+		removed = append(removed, rm.Name)
+	}
+	return removed, nil
 }
 
-// reloadService boots out the old job and bootstraps the regenerated plist.
+// loadService releases any hold and has the runtime pick the Service up from
+// the artifacts on disk.
+func (m *Manager) loadService(s *config.Service) error {
+	target := m.target(s)
+	if err := m.rt.Release(target); err != nil {
+		return err
+	}
+	// Resident services start on load; scheduled services wait for their next
+	// fire. Nothing to Start here.
+	return m.rt.Load(context.Background(), target)
+}
+
+// reloadService stops the Service and loads the regenerated artifacts.
 func (m *Manager) reloadService(s *config.Service) error {
-	label := s.EffectiveLabel()
-	if err := m.ctl.Bootout(context.Background(), label); err != nil {
+	if err := m.rt.Unload(context.Background(), m.target(s)); err != nil {
 		return err
 	}
 	return m.loadService(s)

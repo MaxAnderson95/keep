@@ -10,16 +10,16 @@ import (
 	"time"
 )
 
-// updateTestManager builds a Manager with a fake launchd, temp agents dir,
+// updateTestManager builds a Manager with a fake runtime, temp artifact dir,
 // and — critically for update runs — temp state and log directories.
-func updateTestManager(t *testing.T, yaml string) (*Manager, *fakeController) {
+func updateTestManager(t *testing.T, yaml string) (*Manager, *fakeRuntime) {
 	t.Helper()
 	cfg := mustParse(t, yaml)
 	cfg.Defaults.LogDir = t.TempDir()
-	ctl := newFakeController()
-	m := testManager(t, cfg, ctl)
+	rt := newTestRuntime(t)
+	m := testManager(t, cfg, rt)
 	m.stateDir = t.TempDir()
-	return m, ctl
+	return m, rt
 }
 
 const updYAML = `
@@ -32,7 +32,7 @@ services:
 `
 
 func TestUpdateSuccessRestoresUp(t *testing.T) {
-	m, ctl := updateTestManager(t, updYAML)
+	m, rt := updateTestManager(t, updYAML)
 	s, _ := m.Cfg.Service("svc")
 
 	var out bytes.Buffer
@@ -56,13 +56,13 @@ func TestUpdateSuccessRestoresUp(t *testing.T) {
 	}
 
 	// Down before the commands, Up after (ADR-0006).
-	want := []string{"disable keep.svc", "bootout keep.svc", "enable keep.svc", "bootstrap keep.svc"}
-	if len(ctl.calls) < len(want) {
-		t.Fatalf("calls = %v", ctl.calls)
+	want := []string{"hold keep.svc", "unload keep.svc", "release keep.svc", "load keep.svc"}
+	if len(rt.calls) < len(want) {
+		t.Fatalf("calls = %v", rt.calls)
 	}
 	for i, c := range want {
-		if ctl.calls[i] != c {
-			t.Fatalf("calls[%d] = %q, want %q (all: %v)", i, ctl.calls[i], c, ctl.calls)
+		if rt.calls[i] != c {
+			t.Fatalf("calls[%d] = %q, want %q (all: %v)", i, rt.calls[i], c, rt.calls)
 		}
 	}
 
@@ -82,7 +82,7 @@ func TestUpdateSuccessRestoresUp(t *testing.T) {
 }
 
 func TestUpdateFailureLeavesHold(t *testing.T) {
-	m, ctl := updateTestManager(t, `
+	m, rt := updateTestManager(t, `
 services:
   svc:
     command: /bin/echo serve
@@ -100,12 +100,12 @@ services:
 	if res.OK {
 		t.Fatalf("result = %+v, want failure", res)
 	}
-	// Fail closed: down'd, never brought back (no enable after the disable).
-	if !ctl.disabled["keep.svc"] {
-		t.Fatal("service not left disabled (held) after a failed update")
+	// Fail closed: down'd, never brought back (no release after the hold).
+	if !rt.held["keep.svc"] {
+		t.Fatal("service not left held after a failed update")
 	}
-	if ctl.didCall("enable keep.svc") {
-		t.Fatalf("failed update still brought the service Up: %v", ctl.calls)
+	if rt.didCall("release keep.svc") {
+		t.Fatalf("failed update still brought the service Up: %v", rt.calls)
 	}
 	text := out.String()
 	if strings.Contains(text, "never-runs") {
@@ -117,9 +117,9 @@ services:
 }
 
 func TestUpdateHeldServiceStaysDown(t *testing.T) {
-	m, ctl := updateTestManager(t, updYAML)
+	m, rt := updateTestManager(t, updYAML)
 	s, _ := m.Cfg.Service("svc")
-	ctl.disabled["keep.svc"] = true // a deliberate prior Hold
+	rt.held["keep.svc"] = true // a deliberate prior Hold
 
 	var out bytes.Buffer
 	res, err := m.Update(context.Background(), s, &out)
@@ -129,10 +129,10 @@ func TestUpdateHeldServiceStaysDown(t *testing.T) {
 	if !res.OK || !res.StayedHeld {
 		t.Fatalf("result = %+v, want OK+StayedHeld", res)
 	}
-	if ctl.didCall("enable keep.svc") {
-		t.Fatalf("update undid a deliberate hold: %v", ctl.calls)
+	if rt.didCall("release keep.svc") {
+		t.Fatalf("update undid a deliberate hold: %v", rt.calls)
 	}
-	if !ctl.disabled["keep.svc"] {
+	if !rt.held["keep.svc"] {
 		t.Fatal("service no longer held after update")
 	}
 }
@@ -142,7 +142,7 @@ func TestUpdateTimeoutKillsAndFails(t *testing.T) {
 	updateKillGrace = 2 * time.Second
 	defer func() { updateKillGrace = old }()
 
-	m, ctl := updateTestManager(t, `
+	m, rt := updateTestManager(t, `
 services:
   svc:
     command: /bin/echo serve
@@ -164,8 +164,8 @@ services:
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("timeout took %s, kill did not work", elapsed)
 	}
-	if ctl.didCall("enable keep.svc") {
-		t.Fatalf("timed-out update still brought the service Up: %v", ctl.calls)
+	if rt.didCall("release keep.svc") {
+		t.Fatalf("timed-out update still brought the service Up: %v", rt.calls)
 	}
 	if !strings.Contains(out.String(), "TIMED OUT") {
 		t.Fatalf("output missing timeout marker:\n%s", out.String())

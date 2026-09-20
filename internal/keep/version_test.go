@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/MaxAnderson95/keep/internal/config"
-	"github.com/MaxAnderson95/keep/internal/launchd"
 )
 
 // writeScript drops an executable shell script in dir and returns its path.
@@ -82,7 +81,7 @@ services:
     command: `+bin+`
     version_command: `+bin+` --version
 `)
-	m := testManager(t, cfg, newFakeController())
+	m := testManager(t, cfg, newTestRuntime(t))
 	svc, _ := cfg.Service("app")
 
 	m.CaptureVersion(svc, os.Environ(), 4242)
@@ -119,7 +118,7 @@ services:
     command: `+bin+`
     version_command: `+bin+` -v
 `)
-	m := testManager(t, cfg, newFakeController())
+	m := testManager(t, cfg, newTestRuntime(t))
 	svc, _ := cfg.Service("app")
 
 	m.CaptureVersion(svc, os.Environ(), 1)
@@ -140,7 +139,7 @@ services:
     command: /bin/echo hi
     version_command: /nonexistent/binary --version
 `)
-	m := testManager(t, cfg, newFakeController())
+	m := testManager(t, cfg, newTestRuntime(t))
 	svc, _ := cfg.Service("app")
 
 	m.CaptureVersion(svc, os.Environ(), 7)
@@ -167,7 +166,7 @@ services:
     command: /bin/echo hi
     version_command: `+bin+`
 `)
-	m := testManager(t, cfg, newFakeController())
+	m := testManager(t, cfg, newTestRuntime(t))
 	svc, _ := cfg.Service("app")
 
 	prev := versionCaptureTimeout
@@ -198,7 +197,7 @@ services:
     env:
       FLAVOR: from-config
 `)
-	m := testManager(t, cfg, newFakeController())
+	m := testManager(t, cfg, newTestRuntime(t))
 	svc, _ := cfg.Service("app")
 	env, err := cfg.ForkEnv(svc, config.OSEnviron())
 	if err != nil {
@@ -221,7 +220,7 @@ services:
   app:
     command: /bin/echo hi
 `)
-	m := testManager(t, cfg, newFakeController())
+	m := testManager(t, cfg, newTestRuntime(t))
 	svc, _ := cfg.Service("app")
 
 	m.CaptureVersion(svc, os.Environ(), 1)
@@ -241,7 +240,7 @@ services:
     command: /bin/echo hi
     version_command: /bin/echo 1.0.0
 `)
-	m := testManager(t, cfg, newFakeController())
+	m := testManager(t, cfg, newTestRuntime(t))
 	svc, _ := cfg.Service("app")
 
 	tests := []struct {
@@ -294,7 +293,7 @@ services:
     command: /bin/echo hi
     version_command: /bin/echo 1.0.0
 `)
-	m := testManager(t, cfg, newFakeController())
+	m := testManager(t, cfg, newTestRuntime(t))
 	svc, _ := cfg.Service("app")
 	if got := m.LiveVersion(svc, 500); got != "" {
 		t.Fatalf("LiveVersion() = %q, want empty", got)
@@ -308,12 +307,12 @@ services:
     command: /bin/echo hi
     version_command: /bin/echo 1.0.0
 `)
-	ctl := newFakeController()
-	m := testManager(t, cfg, ctl)
+	rt := newTestRuntime(t)
+	m := testManager(t, cfg, rt)
 	svc, _ := cfg.Service("app")
 	label := svc.EffectiveLabel()
 
-	ctl.loaded[label] = launchd.PrintInfo{Loaded: true, State: "running", PID: 777, HasPID: true}
+	rt.running(label, 777)
 	if err := m.writeVersionEntry("app", VersionEntry{
 		Version: "1.0.0", PID: 777, Command: svc.VersionCommand,
 	}); err != nil {
@@ -333,7 +332,7 @@ services:
 
 	// Stopping the Service must hide the version outright — no last-known
 	// fallback (ADR-0007).
-	delete(ctl.loaded, label)
+	delete(rt.units, label)
 	statuses, err = m.Status(nil)
 	if err != nil {
 		t.Fatalf("Status: %v", err)
@@ -351,12 +350,10 @@ services:
   app:
     command: /bin/echo hi
 `)
-	ctl := newFakeController()
-	m := testManager(t, cfg, ctl)
+	rt := newTestRuntime(t)
+	m := testManager(t, cfg, rt)
 	svc, _ := cfg.Service("app")
-	ctl.loaded[svc.EffectiveLabel()] = launchd.PrintInfo{
-		Loaded: true, State: "running", PID: 777, HasPID: true,
-	}
+	rt.running(svc.EffectiveLabel(), 777)
 
 	statuses, err := m.Status(nil)
 	if err != nil {
@@ -382,7 +379,7 @@ services:
   dropped:
     command: /bin/echo hi
 `)
-	m := testManager(t, cfg, newFakeController())
+	m := testManager(t, cfg, newTestRuntime(t))
 	keeper, _ := cfg.Service("keeper")
 
 	write := func(name, command string) {
@@ -416,7 +413,7 @@ services:
     command: /usr/bin/true
     version_command: /usr/bin/true --version
 `)
-	m := testManager(t, cfg, newFakeController())
+	m := testManager(t, cfg, newTestRuntime(t))
 	if err := m.writeVersionEntry("web", VersionEntry{
 		Version: "0.9.0", PID: 1, Command: "/usr/bin/true -v", // the old command
 	}); err != nil {
@@ -444,7 +441,7 @@ services:
   app:
     command: /bin/echo hi
 `)
-	m := testManager(t, cfg, newFakeController())
+	m := testManager(t, cfg, newTestRuntime(t))
 	m.pruneVersionEntries() // must not panic or create anything
 	if _, err := os.Stat(m.versionDir()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("versions directory exists (%v); pruning must not create it", err)
@@ -458,7 +455,7 @@ services:
     command: /bin/echo hi
     version_command: /bin/echo 1.0.0
 `)
-	m := testManager(t, cfg, newFakeController())
+	m := testManager(t, cfg, newTestRuntime(t))
 	if err := os.MkdirAll(m.versionDir(), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}

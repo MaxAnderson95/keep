@@ -45,7 +45,7 @@ func newApp(bi BuildInfo) *cli.App {
 
 	app := &cli.App{
 		Name:                 "keep",
-		Usage:                "declare and manage background services on macOS, launchd-native",
+		Usage:                "declare and manage background services",
 		Version:              bi.Version,
 		HideHelpCommand:      true,
 		EnableBashCompletion: true,
@@ -66,7 +66,7 @@ func newApp(bi BuildInfo) *cli.App {
 			cmdServe(bi),
 			cmdTUI(bi),
 			cmdVersion(bi),
-			cmdFork(bi), // hidden, launchd-only
+			cmdFork(bi), // hidden (ADR-0002)
 		},
 		// Bare `keep` opens the TUI (D14); -h/--help never does (urfave prints
 		// help and skips Action).
