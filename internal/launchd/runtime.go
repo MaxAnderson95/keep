@@ -184,8 +184,10 @@ func (r *Runtime) kickstart(label string, kill bool) error {
 }
 
 // Forget stops the label and clears its disable record, so a future Service
-// reusing the label does not inherit an old local hold.
-func (r *Runtime) Forget(ctx context.Context, label string) error {
+// reusing the label does not inherit an old local hold. The artifact paths are
+// not needed here: launchd has exactly one unit per label, so an artifact keep
+// is removing and the label's unit are the same thing.
+func (r *Runtime) Forget(ctx context.Context, label string, _ []string) error {
 	if err := r.unloadLabel(ctx, label); err != nil {
 		return err
 	}

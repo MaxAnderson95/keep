@@ -143,7 +143,7 @@ func TestForgetToleratesMissingUnits(t *testing.T) {
 	s.fail["stop keep.gone.service"] = "Failed to stop keep.gone.service: Unit keep.gone.service not loaded."
 	s.fail["disable keep.gone.service"] = "Failed to disable unit: Unit file keep.gone.service does not exist."
 
-	if err := s.adapter().Forget(context.Background(), "keep.gone"); err != nil {
+	if err := s.adapter().Forget(context.Background(), "keep.gone", nil); err != nil {
 		t.Fatalf("Forget should tolerate units that are already gone: %v", err)
 	}
 	if s.indexOf("daemon-reload") < s.indexOf("disable keep.gone.service") {
@@ -154,7 +154,7 @@ func TestForgetToleratesMissingUnits(t *testing.T) {
 func TestForgetPropagatesRealFailures(t *testing.T) {
 	s := newScripted()
 	s.fail["stop keep.stuck.timer"] = "Failed to stop keep.stuck.timer: Access denied"
-	err := s.adapter().Forget(context.Background(), "keep.stuck")
+	err := s.adapter().Forget(context.Background(), "keep.stuck", nil)
 	if err == nil || !strings.Contains(err.Error(), "Access denied") {
 		t.Fatalf("want the systemctl error surfaced, got %v", err)
 	}
@@ -369,7 +369,7 @@ func TestParseVersion(t *testing.T) {
 // this a pruned Service lingers in `systemctl --user --failed` until reboot.
 func TestForgetClearsResidualFailedState(t *testing.T) {
 	s := newScripted()
-	if err := s.adapter().Forget(context.Background(), "keep.gone"); err != nil {
+	if err := s.adapter().Forget(context.Background(), "keep.gone", nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"reset-failed keep.gone.timer", "reset-failed keep.gone.service"} {
@@ -383,7 +383,45 @@ func TestForgetClearsResidualFailedState(t *testing.T) {
 func TestForgetIgnoresResetFailedErrors(t *testing.T) {
 	s := newScripted()
 	s.fail["reset-failed"] = "Failed to reset failed state: Unit keep.gone.service not loaded."
-	if err := s.adapter().Forget(context.Background(), "keep.gone"); err != nil {
+	if err := s.adapter().Forget(context.Background(), "keep.gone", nil); err != nil {
 		t.Fatalf("reset-failed is cleanup, not a precondition: %v", err)
+	}
+}
+
+// A Service that stops being scheduled gives up its .timer while its .service
+// lives on, sometimes for a different Service. Forgetting the whole label
+// would stop that survivor.
+func TestForgetOnlyTouchesTheNamedArtifacts(t *testing.T) {
+	s := newScripted()
+	err := s.adapter().Forget(context.Background(), "keep.web", []string{"/units/keep.web.timer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"stop keep.web.timer", "disable keep.web.timer"} {
+		if !s.called(want) {
+			t.Errorf("missing %q in %v", want, s.calls)
+		}
+	}
+	for _, unwanted := range []string{"stop keep.web.service", "disable keep.web.service"} {
+		if s.called(unwanted) {
+			t.Errorf("%q must not be touched: %v", unwanted, s.calls)
+		}
+	}
+	if !s.called("daemon-reload") {
+		t.Errorf("the manager still has to drop the deleted file: %v", s.calls)
+	}
+}
+
+// A pruned Service is gone from the Config, so keep cannot say which units it
+// had; every form the label could have taken is forgotten.
+func TestForgetWithoutArtifactsCoversEveryUnitForm(t *testing.T) {
+	s := newScripted()
+	if err := s.adapter().Forget(context.Background(), "keep.gone", nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"stop keep.gone.timer", "stop keep.gone.service"} {
+		if !s.called(want) {
+			t.Errorf("missing %q in %v", want, s.calls)
+		}
 	}
 }

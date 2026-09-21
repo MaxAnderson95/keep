@@ -135,7 +135,7 @@ func (m *Manager) Apply() (ApplyResult, error) {
 		}
 	}
 
-	removed, err := m.prune(plan.Removes, managed)
+	removed, err := m.prune(plan.Removes, managed, claimed)
 	res.Removed = removed
 	if err != nil {
 		return res, err
@@ -154,14 +154,23 @@ func (m *Manager) Apply() (ApplyResult, error) {
 // record that lets the next apply rediscover the orphan — without the restore,
 // a runtime error here would leave a Service running that keep could never see
 // again.
-func (m *Manager) prune(removes []ServicePlan, managed []ManagedArtifact) ([]string, error) {
+// prune removes the artifacts of Services that left the Config. An artifact a
+// declared Service has since claimed is left alone: the file was taken over,
+// not abandoned, and it has already been rewritten for its new owner.
+func (m *Manager) prune(removes []ServicePlan, managed []ManagedArtifact, claimed map[string]bool) ([]string, error) {
 	if len(removes) == 0 {
 		return nil, nil
 	}
 	_, orphaned := m.orphanLabels(managed)
 	var removed []string
 	for _, rm := range removes {
-		if err := m.forgetLabel(rm.Label, orphaned[rm.Label]); err != nil {
+		var abandoned []ManagedArtifact
+		for _, a := range orphaned[rm.Label] {
+			if !claimed[a.Path] {
+				abandoned = append(abandoned, a)
+			}
+		}
+		if err := m.forgetArtifacts(rm.Label, abandoned); err != nil {
 			return removed, fmt.Errorf("removing orphan %q: %w", rm.Label, err)
 		}
 		removed = append(removed, rm.Name)
@@ -174,24 +183,31 @@ func (m *Manager) prune(removes []ServicePlan, managed []ManagedArtifact) ([]str
 func (m *Manager) retire(stale []ManagedArtifact) error {
 	labels, grouped := byLabel(stale)
 	for _, label := range labels {
-		if err := m.forgetLabel(label, grouped[label]); err != nil {
+		if err := m.forgetArtifacts(label, grouped[label]); err != nil {
 			return fmt.Errorf("retiring %q: %w", label, err)
 		}
 	}
 	return nil
 }
 
-// forgetLabel deletes a label's artifacts and then has the runtime forget it.
-// The files go first, so a runtime that re-reads disk while forgetting does
-// not find them still there; a failed Forget puts them back, because they are
-// the only record that would let the next apply retry.
-func (m *Manager) forgetLabel(label string, arts []ManagedArtifact) error {
+// forgetArtifacts deletes the given artifacts and then has the runtime forget
+// exactly those, never the whole label: a sibling artifact under the same
+// label may still be in service, sometimes for a different Service. The files
+// go first, so a runtime that re-reads disk while forgetting does not find
+// them still there; a failed Forget puts them back, because they are the only
+// record that would let the next apply retry.
+func (m *Manager) forgetArtifacts(label string, arts []ManagedArtifact) error {
+	if len(arts) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(arts))
 	for _, a := range arts {
 		if err := os.Remove(a.Path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
+		paths = append(paths, a.Path)
 	}
-	if err := m.rt.Forget(context.Background(), label); err != nil {
+	if err := m.rt.Forget(context.Background(), label, paths); err != nil {
 		restore(arts)
 		return err
 	}

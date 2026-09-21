@@ -452,3 +452,57 @@ services:
 		t.Error("the Service should be running under its new label")
 	}
 }
+
+// The mixed swap: a scheduled Service and a resident one trade labels. The
+// scheduled Service's old timer is genuinely abandoned, but its old .service
+// path now belongs to the resident Service, so retiring the timer must not
+// take the whole label down with it.
+func TestApplyRetiresOneArtifactWithoutStoppingItsSurvivingSibling(t *testing.T) {
+	cfg := mustParse(t, `
+services:
+  asrv:
+    command: /usr/bin/true
+    label: keep.two
+  zjob:
+    type: scheduled
+    command: /usr/bin/true
+    label: keep.one
+    schedule:
+      interval: 1h
+`)
+	rt := newTestRuntime(t)
+	rt.perUnit = 2 // the scheduled Service renders two files
+	m := testManager(t, cfg, rt)
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Services reconcile in name order, so the resident Service takes the
+	// label over before the scheduled one retires its leftover timer: the
+	// retirement has to leave a unit alone that is already live.
+	// Swap the labels, and let the resident Service render a single file.
+	rt.perUnit = 1
+	for i := range m.Cfg.Services {
+		switch m.Cfg.Services[i].Name {
+		case "zjob":
+			m.Cfg.Services[i].Label = "keep.two"
+		case "asrv":
+			m.Cfg.Services[i].Label = "keep.one"
+		}
+	}
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The abandoned timer is gone.
+	if _, err := os.Stat(filepath.Join(rt.dir, "keep.one.timer")); !os.IsNotExist(err) {
+		t.Error("the abandoned timer should have been retired")
+	}
+	// The label's other artifact was taken over, not abandoned.
+	if _, err := os.Stat(filepath.Join(rt.dir, "keep.one.unit")); err != nil {
+		t.Errorf("keep.one.unit now belongs to another Service: %v", err)
+	}
+	if _, ok := rt.units["keep.one"]; !ok {
+		t.Error("retiring a sibling artifact stopped the unit that took the label over")
+	}
+}

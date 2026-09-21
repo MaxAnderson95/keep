@@ -114,10 +114,14 @@ type Runtime interface {
 	Start(t Target) error
 	// Restart restarts a loaded unit in place.
 	Restart(t Target) error
-	// Forget stops the label and clears every persistent record of it. It
-	// takes a bare label because a pruned Service is gone from the Config, so
-	// the adapter must try every unit form it could have emitted.
-	Forget(ctx context.Context, label string) error
+	// Forget stops the units behind the given artifacts and clears every
+	// persistent record of them. The paths are the artifact files keep is
+	// removing, because a label is not always the right granularity: when a
+	// Service gives up one of its files while another Service takes over
+	// another under the same label, only the abandoned unit may be stopped.
+	// Empty paths means the whole label, for a pruned Service whose artifacts
+	// keep can no longer enumerate.
+	Forget(ctx context.Context, label string, paths []string) error
 
 	// Info returns the live state of the unit.
 	Info(t Target) (Info, error)

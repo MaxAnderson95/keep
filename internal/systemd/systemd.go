@@ -178,11 +178,16 @@ func (r *Runtime) Restart(t runtime.Target) error {
 	return r.startUnit(context.Background(), "restart", unit(t))
 }
 
-// Forget stops and disables every unit the label could have produced, then
-// reloads so the manager drops the files the Manager has already deleted. A
-// pruned Service is gone from the Config, so which form it took is unknown.
-func (r *Runtime) Forget(ctx context.Context, label string) error {
-	for _, name := range []string{label + timerExt, label + serviceExt} {
+// Forget stops and disables the units behind the given artifacts, then reloads
+// so the manager drops the files the Manager has already deleted.
+//
+// Only the named artifacts' units are touched. A Service that stops being
+// scheduled gives up its .timer while its .service lives on — sometimes under
+// another Service — and stopping the whole label would take that one down too.
+// With no artifacts named, a pruned Service's units cannot be enumerated, so
+// every form the label could have taken is forgotten.
+func (r *Runtime) Forget(ctx context.Context, label string, paths []string) error {
+	for _, name := range unitNames(label, paths) {
 		if err := r.stop(ctx, name); err != nil {
 			return err
 		}
@@ -196,6 +201,21 @@ func (r *Runtime) Forget(ctx context.Context, label string) error {
 		_, _ = r.run(ctx, "reset-failed", name)
 	}
 	return r.daemonReload(ctx)
+}
+
+// unitNames maps the artifacts keep is removing to the units that run them.
+// The adapter named those files, so their basenames are the unit names.
+func unitNames(label string, paths []string) []string {
+	if len(paths) == 0 {
+		return []string{label + timerExt, label + serviceExt}
+	}
+	var names []string
+	for _, p := range paths {
+		if base := filepath.Base(p); filepath.Ext(base) == timerExt || filepath.Ext(base) == serviceExt {
+			names = append(names, base)
+		}
+	}
+	return names
 }
 
 // showProperties is what Info asks systemctl for.
