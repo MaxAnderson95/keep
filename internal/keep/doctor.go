@@ -43,10 +43,12 @@ func (m *Manager) Doctor() ([]Finding, error) {
 	}
 	held, err := m.rt.Held()
 	if err != nil {
-		if len(findings) > 0 {
-			// The adapter already explained why the runtime is unusable, with
-			// a fix. That diagnosis is the answer; the error underneath it is
-			// the symptom.
+		// An error-severity diagnosis means the adapter has already said the
+		// runtime is unusable and how to fix it; this failure is that
+		// problem's symptom, and the diagnosis is the more useful answer. A
+		// mere warning (lingering is off, say) explains nothing about why a
+		// query failed, so that error still surfaces.
+		if hasError(findings) {
 			return findings, nil
 		}
 		return findings, err
@@ -144,6 +146,15 @@ func (m *Manager) Doctor() ([]Finding, error) {
 
 	findings = append(findings, m.orphanFindings(managed)...)
 	return findings, nil
+}
+
+func hasError(findings []Finding) bool {
+	for _, f := range findings {
+		if f.Severity == SevError {
+			return true
+		}
+	}
+	return false
 }
 
 // runtimeFindings asks the adapter what is wrong with the environment it needs

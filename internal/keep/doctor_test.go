@@ -282,3 +282,22 @@ func TestDoctorPutsRuntimeFindingsFirst(t *testing.T) {
 		t.Errorf("a runtime finding names no Service, got %q", findings[0].Service)
 	}
 }
+
+// A warning explains nothing about why a runtime query failed, so swallowing
+// the error behind one would hide a real failure.
+func TestDoctorSurfacesErrorsAWarningDoesNotExplain(t *testing.T) {
+	fake := newTestRuntime(t)
+	fake.heldErr = errors.New("something else broke")
+	rt := diagnosingRuntime{fakeRuntime: fake, diags: []runtime.Diagnosis{{
+		Severity: runtime.SevWarning, Problem: "lingering is off", Fix: "enable-linger",
+	}}}
+	m := testManager(t, mustParse(t, oneResident(t)), rt)
+
+	findings, err := m.Doctor()
+	if err == nil {
+		t.Fatal("a warning must not absorb an unrelated runtime failure")
+	}
+	if !findingsContain(findings, "lingering is off") {
+		t.Errorf("the warning should still be reported alongside the error: %+v", findings)
+	}
+}

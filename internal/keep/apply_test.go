@@ -378,3 +378,77 @@ func TestApplyRetireKeepsAHold(t *testing.T) {
 		t.Error("the stale artifact should be retired even for a held Service")
 	}
 }
+
+// Two Services swapping labels hand their artifacts over. Neither file is
+// stale: each is claimed by the other Service in the same apply, and deleting
+// one would take out a unit that is supposed to keep running.
+func TestApplyDoesNotRetireAnArtifactAnotherServiceClaims(t *testing.T) {
+	cfg := mustParse(t, `
+services:
+  a:
+    command: /usr/bin/true
+    label: keep.one
+  b:
+    command: /usr/bin/true
+    label: keep.two
+`)
+	rt := newTestRuntime(t)
+	m := testManager(t, cfg, rt)
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Swap the labels.
+	for i := range m.Cfg.Services {
+		switch m.Cfg.Services[i].Name {
+		case "a":
+			m.Cfg.Services[i].Label = "keep.two"
+		case "b":
+			m.Cfg.Services[i].Label = "keep.one"
+		}
+	}
+
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	for _, label := range []string{"keep.one", "keep.two"} {
+		if _, err := os.Stat(filepath.Join(rt.dir, label+".unit")); err != nil {
+			t.Errorf("%s should still exist after the swap: %v", label, err)
+		}
+		if _, ok := rt.units[label]; !ok {
+			t.Errorf("%s should still be loaded after the swap", label)
+		}
+	}
+	if rt.didCall("forget") {
+		t.Errorf("nothing was abandoned, so nothing should be forgotten: %v", rt.calls)
+	}
+}
+
+// A label the Config genuinely abandons is still retired.
+func TestApplyRetiresAnAbandonedLabel(t *testing.T) {
+	cfg := mustParse(t, `
+services:
+  a:
+    command: /usr/bin/true
+    label: keep.old
+`)
+	rt := newTestRuntime(t)
+	m := testManager(t, cfg, rt)
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	m.Cfg.Services[0].Label = "keep.new"
+
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(rt.dir, "keep.old.unit")); !os.IsNotExist(err) {
+		t.Error("the abandoned label's artifact should have been retired")
+	}
+	if !rt.didCall("forget keep.old") {
+		t.Errorf("the abandoned label should have been forgotten: %v", rt.calls)
+	}
+	if _, ok := rt.units["keep.new"]; !ok {
+		t.Error("the Service should be running under its new label")
+	}
+}

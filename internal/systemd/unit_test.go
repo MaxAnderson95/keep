@@ -271,3 +271,39 @@ func TestMarkerValuesAreNotEscaped(t *testing.T) {
 		t.Errorf("KeepPath round-tripped as %q, want %q", got, j.KeepPath)
 	}
 }
+
+// systemd resolves % specifiers across the whole command line but substitutes
+// variables only in the arguments, so the executable and its arguments need
+// different escaping. Both halves verified against systemd 255: an unescaped
+// `%` in the binary path expanded, and a doubled `$` there was not undone,
+// each failing the unit with status 203.
+func TestExecLineEscapesTheExecutableDifferently(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want string
+	}{
+		{
+			name: "a dollar in the binary path stays single",
+			in:   []string{"/home/m/t$dir/keep", "fork", "web"},
+			want: `/home/m/t$dir/keep fork web`,
+		},
+		{
+			name: "a percent in the binary path is still doubled",
+			in:   []string{"/home/m/t%dir/keep", "fork", "web"},
+			want: `/home/m/t%%dir/keep fork web`,
+		},
+		{
+			name: "arguments double both",
+			in:   []string{"/opt/keep", "--config", "/home/m/$d/100%.yaml"},
+			want: `/opt/keep --config /home/m/$$d/100%%.yaml`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := execLine(tc.in); got != tc.want {
+				t.Errorf("execLine = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -47,6 +47,10 @@ func (m *Manager) Apply() (ApplyResult, error) {
 	if err != nil {
 		return res, err
 	}
+	rendered, claimed, err := m.allArtifacts()
+	if err != nil {
+		return res, err
+	}
 
 	for i := range m.Cfg.Services {
 		s := &m.Cfg.Services[i]
@@ -56,10 +60,7 @@ func (m *Manager) Apply() (ApplyResult, error) {
 		if err := m.ensureLogDir(s); err != nil {
 			return res, fmt.Errorf("service %q: %w", s.Name, err)
 		}
-		desired, err := m.Artifacts(s)
-		if err != nil {
-			return res, err
-		}
+		desired := rendered[s.Name]
 		for _, a := range desired {
 			if err := writeIfChanged(a.Path, a.Data); err != nil {
 				return res, fmt.Errorf("service %q: %w", s.Name, err)
@@ -72,7 +73,7 @@ func (m *Manager) Apply() (ApplyResult, error) {
 		// addresses only the resident unit. Retiring comes before the
 		// held and declared-off branches below, because the whole point is
 		// that a Service which is supposed to be stopped stays stopped.
-		stale := staleArtifacts(managed, s.Name, desired)
+		stale := staleArtifacts(managed, s.Name, claimed)
 		if len(stale) > 0 {
 			if err := m.retire(stale); err != nil {
 				return res, fmt.Errorf("service %q: %w", s.Name, err)

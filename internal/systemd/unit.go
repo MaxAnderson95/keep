@@ -168,24 +168,39 @@ func calField(v *int) string {
 }
 
 // execLine renders argv as a systemd ExecStart value. systemd splits the value
-// on whitespace, expands `%` specifiers, and substitutes `$VAR` and `${VAR}`
-// from the manager's environment — the last two even inside quotes — so
-// anything with whitespace is quoted and every literal `%` and `$` is doubled.
+// on whitespace, so anything containing whitespace is quoted, and it rewrites
+// the value twice more before running it — but not identically for every
+// token, which is why the executable is escaped differently from its
+// arguments:
+//
+//   - `%` specifiers are resolved across the whole line, the executable
+//     included. Verified on systemd 255: an unescaped `%d` in the binary path
+//     expanded to the credentials directory and the unit failed with 203.
+//   - `$VAR` and `${VAR}` are substituted in the arguments only; the manual
+//     says the first argument may not be a variable. Doubling a dollar there
+//     is not undone, so `$$` reaches execve literally and the unit fails with
+//     203. Verified the same way.
 func execLine(argv []string) string {
 	quoted := make([]string, 0, len(argv))
-	for _, a := range argv {
-		quoted = append(quoted, execArg(a))
+	for i, a := range argv {
+		quoted = append(quoted, execArg(a, i == 0))
 	}
 	return strings.Join(quoted, " ")
 }
 
-// execArgEscapes doubles what systemd would otherwise interpret and
-// backslash-escapes what would otherwise end the argument. One Replacer, so
-// each character is considered once and an escape cannot be re-escaped.
-var execArgEscapes = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "%", "%%", "$", "$$")
+// One Replacer per token kind, so each character is considered once and an
+// escape cannot itself be escaped.
+var (
+	execPathEscapes = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "%", "%%")
+	execArgEscapes  = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "%", "%%", "$", "$$")
+)
 
-func execArg(a string) string {
-	escaped := execArgEscapes.Replace(a)
+func execArg(a string, executable bool) string {
+	escaper := execArgEscapes
+	if executable {
+		escaper = execPathEscapes
+	}
+	escaped := escaper.Replace(a)
 	if a == "" || strings.ContainsAny(a, " \t'\"\\") {
 		return `"` + escaped + `"`
 	}

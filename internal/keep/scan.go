@@ -3,8 +3,6 @@ package keep
 import (
 	"os"
 	"path/filepath"
-
-	"github.com/MaxAnderson95/keep/internal/runtime"
 )
 
 // ManagedArtifact is a generated file on disk that carries keep's marker.
@@ -64,14 +62,13 @@ func (m *Manager) ScanManaged() ([]ManagedArtifact, error) {
 // scheduled Service that became resident, or an artifact under a label the
 // Config has since renamed. They are not orphans — the Service is still
 // declared — and nothing else would ever remove them.
-func staleArtifacts(managed []ManagedArtifact, name string, desired []runtime.Artifact) []ManagedArtifact {
-	wanted := make(map[string]bool, len(desired))
-	for _, a := range desired {
-		wanted[a.Path] = true
-	}
+// claimed is every path any declared Service renders, so a path one Service
+// gave up but another has taken over is never treated as stale: two Services
+// that swap labels hand the file over rather than deleting it.
+func staleArtifacts(managed []ManagedArtifact, name string, claimed map[string]bool) []ManagedArtifact {
 	var out []ManagedArtifact
 	for _, a := range managed {
-		if a.Service == name && !wanted[a.Path] {
+		if a.Service == name && !claimed[a.Path] {
 			out = append(out, a)
 		}
 	}

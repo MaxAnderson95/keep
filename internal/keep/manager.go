@@ -131,6 +131,26 @@ func (m *Manager) Artifacts(s *config.Service) ([]runtime.Artifact, error) {
 	return m.rt.Render(job), nil
 }
 
+// allArtifacts renders every declared Service once, returning the artifacts per
+// Service name and the set of paths they collectively claim. Reconciling needs
+// both: what each Service wants, and which files are spoken for by anyone.
+func (m *Manager) allArtifacts() (map[string][]runtime.Artifact, map[string]bool, error) {
+	byService := make(map[string][]runtime.Artifact, len(m.Cfg.Services))
+	claimed := map[string]bool{}
+	for i := range m.Cfg.Services {
+		s := &m.Cfg.Services[i]
+		arts, err := m.Artifacts(s)
+		if err != nil {
+			return nil, nil, err
+		}
+		byService[s.Name] = arts
+		for _, a := range arts {
+			claimed[a.Path] = true
+		}
+	}
+	return byService, claimed, nil
+}
+
 // ensureLogDir creates the log directory for a Service if needed.
 func (m *Manager) ensureLogDir(s *config.Service) error {
 	dir := m.Cfg.ResolveLogDir(s)

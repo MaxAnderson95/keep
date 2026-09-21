@@ -69,15 +69,16 @@ func (m *Manager) ComputePlan() (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	rendered, claimed, err := m.allArtifacts()
+	if err != nil {
+		return Plan{}, err
+	}
 
 	var plan Plan
 	for i := range m.Cfg.Services {
 		s := &m.Cfg.Services[i]
 		label := s.EffectiveLabel()
-		desired, err := m.Artifacts(s)
-		if err != nil {
-			return Plan{}, err
-		}
+		desired := rendered[s.Name]
 		sp := ServicePlan{Name: s.Name, Label: label}
 
 		var missing, differing []string
@@ -103,7 +104,7 @@ func (m *Manager) ComputePlan() (Plan, error) {
 
 		// Artifacts the Service's old shape left behind are apply's to delete,
 		// so diff has to say so.
-		if stale := staleArtifacts(managed, s.Name, desired); len(stale) > 0 {
+		if stale := staleArtifacts(managed, s.Name, claimed); len(stale) > 0 {
 			names := make([]string, 0, len(stale))
 			for _, a := range stale {
 				names = append(names, filepath.Base(a.Path))
