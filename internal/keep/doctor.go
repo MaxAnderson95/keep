@@ -30,14 +30,28 @@ type Finding struct {
 // Doctor runs every read-only check across managed Services. It never mutates
 // state (D13). The returned findings are empty when everything is healthy.
 func (m *Manager) Doctor() ([]Finding, error) {
-	var findings []Finding
+	// Whatever is wrong with the runtime environment itself explains every
+	// per-Service symptom below it, so it is diagnosed first — and before any
+	// query that needs the runtime to answer. A doctor that failed with a raw
+	// "cannot reach the service manager" error would withhold the one finding
+	// that says how to fix exactly that.
+	findings := m.runtimeFindings()
+
 	managed, err := m.ScanManaged()
 	if err != nil {
-		return nil, err
+		return findings, err
 	}
 	held, err := m.rt.Held()
 	if err != nil {
-		return nil, err
+		// An error-severity diagnosis means the adapter has already said the
+		// runtime is unusable and how to fix it; this failure is that
+		// problem's symptom, and the diagnosis is the more useful answer. A
+		// mere warning (lingering is off, say) explains nothing about why a
+		// query failed, so that error still surfaces.
+		if hasError(findings) {
+			return findings, nil
+		}
+		return findings, err
 	}
 
 	for i := range m.Cfg.Services {
@@ -132,6 +146,35 @@ func (m *Manager) Doctor() ([]Finding, error) {
 
 	findings = append(findings, m.orphanFindings(managed)...)
 	return findings, nil
+}
+
+func hasError(findings []Finding) bool {
+	for _, f := range findings {
+		if f.Severity == SevError {
+			return true
+		}
+	}
+	return false
+}
+
+// runtimeFindings asks the adapter what is wrong with the environment it needs
+// — a missing systemd user session, lingering left off. An adapter with
+// nothing OS-specific to check (launchd) implements no Diagnoser and
+// contributes nothing.
+func (m *Manager) runtimeFindings() []Finding {
+	d, ok := m.rt.(runtime.Diagnoser)
+	if !ok {
+		return nil
+	}
+	var findings []Finding
+	for _, diag := range d.Diagnose() {
+		findings = append(findings, Finding{
+			Severity: Severity(diag.Severity),
+			Problem:  diag.Problem,
+			Fix:      diag.Fix,
+		})
+	}
+	return findings
 }
 
 // artifactFindings checks each file the runtime renders for a Service against

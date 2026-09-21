@@ -60,6 +60,31 @@ type MarkerInfo struct {
 	KeepPath string
 }
 
+// Severity classifies a Diagnosis.
+type Severity string
+
+const (
+	SevError   Severity = "error"
+	SevWarning Severity = "warning"
+	SevInfo    Severity = "info"
+)
+
+// Diagnosis is a read-only problem with the runtime environment itself, as
+// opposed to any one Service.
+type Diagnosis struct {
+	Severity Severity
+	Problem  string
+	Fix      string
+}
+
+// Diagnoser is an optional Runtime capability: the health checks only an
+// adapter can make, because only it knows what its runtime needs to work.
+// `keep doctor` folds them in for an adapter that implements it and asks
+// nothing of one that does not.
+type Diagnoser interface {
+	Diagnose() []Diagnosis
+}
+
 // Runtime is the one seam between keep's orchestration and an OS service
 // runtime. Adapters own rendering, control, and observation; they never touch
 // the filesystem.
@@ -89,10 +114,14 @@ type Runtime interface {
 	Start(t Target) error
 	// Restart restarts a loaded unit in place.
 	Restart(t Target) error
-	// Forget stops the label and clears every persistent record of it. It
-	// takes a bare label because a pruned Service is gone from the Config, so
-	// the adapter must try every unit form it could have emitted.
-	Forget(ctx context.Context, label string) error
+	// Forget stops the units behind the given artifacts and clears every
+	// persistent record of them. The paths are the artifact files keep is
+	// removing, because a label is not always the right granularity: when a
+	// Service gives up one of its files while another Service takes over
+	// another under the same label, only the abandoned unit may be stopped.
+	// Empty paths means the whole label, for a pruned Service whose artifacts
+	// keep can no longer enumerate.
+	Forget(ctx context.Context, label string, paths []string) error
 
 	// Info returns the live state of the unit.
 	Info(t Target) (Info, error)

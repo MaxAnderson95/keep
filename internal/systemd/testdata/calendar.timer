@@ -1,0 +1,19 @@
+[Unit]
+Description=keep timer nightly
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+OnCalendar=Sun *-*-* 04:00:00
+OnCalendar=Sun *-*-* 05:15:00
+OnCalendar=*-06-01 06:45:00
+AccuracySec=1s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+
+[X-Keep]
+Managed=true
+Service=nightly
+Version=1.2.3
+Path=/opt/keep/bin/keep

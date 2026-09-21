@@ -1,6 +1,7 @@
 package keep
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -281,4 +282,264 @@ func TestScanFollowsSymlinkedArtifacts(t *testing.T) {
 		}
 	}
 	t.Fatalf("symlinked artifact not found in scan: %+v", managed)
+}
+
+// ~/Library/LaunchAgents always exists, but a Linux machine that has never had
+// a user unit has no ~/.config/systemd/user. Somebody has to create it, and
+// adapters never touch the filesystem.
+func TestApplyCreatesTheArtifactDirectory(t *testing.T) {
+	cfg := mustParse(t, oneResident(t))
+	rt := newFakeRuntime(filepath.Join(t.TempDir(), "units"))
+	m := testManager(t, cfg, rt)
+
+	if _, err := m.Apply(); err != nil {
+		t.Fatalf("apply into a missing artifact directory: %v", err)
+	}
+	if _, err := os.Stat(artifactPath(t, m, &cfg.Services[0])); err != nil {
+		t.Fatalf("artifact not written: %v", err)
+	}
+}
+
+// A scheduled Service that becomes resident stops rendering its timer, but the
+// timer is still on disk, still enabled, and still starts the Service — even
+// after `keep down`. Nothing else reconciles it: the Service is still in the
+// Config, so it is not an orphan.
+func TestApplyRetiresArtifactsAServiceNoLongerRenders(t *testing.T) {
+	cfg := mustParse(t, oneResident(t))
+	rt := newTestRuntime(t)
+	rt.perUnit = 2 // the Service's old shape needed two files
+	m := testManager(t, cfg, rt)
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(rt.dir, "keep.web.timer")
+	if _, err := os.Stat(stale); err != nil {
+		t.Fatalf("setup: the two-artifact shape should have written %s: %v", stale, err)
+	}
+
+	// The Service's shape changes: one artifact from here on.
+	rt.perUnit = 1
+
+	// diff has to say apply will delete it.
+	sp := planFor(t, m, "web")
+	if sp.Kind == ChangeNoop {
+		t.Error("a Service with a retired artifact is not a noop")
+	}
+	if !strings.Contains(sp.Reason, "keep.web.timer") {
+		t.Errorf("Reason = %q, should name the retired file", sp.Reason)
+	}
+
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("%s should have been retired", stale)
+	}
+	if !rt.didCall("forget keep.web") {
+		t.Errorf("the runtime should have been told to forget the retired unit: %v", rt.calls)
+	}
+	// The Service itself survives its own reshaping.
+	if _, err := os.Stat(artifactPath(t, m, &cfg.Services[0])); err != nil {
+		t.Errorf("the Service's current artifact should still be there: %v", err)
+	}
+}
+
+// Retiring uses Forget, which clears a label's persistent records — including,
+// on some runtimes, the hold. A Service the user Down'd must not come back
+// just because its shape changed.
+func TestApplyRetireKeepsAHold(t *testing.T) {
+	cfg := mustParse(t, oneResident(t))
+	rt := newTestRuntime(t)
+	rt.perUnit = 2
+	m := testManager(t, cfg, rt)
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Down(context.Background(), &cfg.Services[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	rt.perUnit = 1
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+
+	held, err := rt.Held()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !held["keep.web"] {
+		t.Error("apply lost the hold while retiring a stale artifact")
+	}
+	if _, ok := rt.units["keep.web"]; ok {
+		t.Error("a held Service must not be running after apply")
+	}
+	if _, err := os.Stat(filepath.Join(rt.dir, "keep.web.timer")); !os.IsNotExist(err) {
+		t.Error("the stale artifact should be retired even for a held Service")
+	}
+}
+
+// Two Services swapping labels hand their artifacts over. Neither file is
+// stale: each is claimed by the other Service in the same apply, and deleting
+// one would take out a unit that is supposed to keep running.
+func TestApplyDoesNotRetireAnArtifactAnotherServiceClaims(t *testing.T) {
+	cfg := mustParse(t, `
+services:
+  a:
+    command: /usr/bin/true
+    label: keep.one
+  b:
+    command: /usr/bin/true
+    label: keep.two
+`)
+	rt := newTestRuntime(t)
+	m := testManager(t, cfg, rt)
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Swap the labels.
+	for i := range m.Cfg.Services {
+		switch m.Cfg.Services[i].Name {
+		case "a":
+			m.Cfg.Services[i].Label = "keep.two"
+		case "b":
+			m.Cfg.Services[i].Label = "keep.one"
+		}
+	}
+
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	for _, label := range []string{"keep.one", "keep.two"} {
+		if _, err := os.Stat(filepath.Join(rt.dir, label+".unit")); err != nil {
+			t.Errorf("%s should still exist after the swap: %v", label, err)
+		}
+		if _, ok := rt.units[label]; !ok {
+			t.Errorf("%s should still be loaded after the swap", label)
+		}
+	}
+	if rt.didCall("forget") {
+		t.Errorf("nothing was abandoned, so nothing should be forgotten: %v", rt.calls)
+	}
+}
+
+// A label the Config genuinely abandons is still retired.
+func TestApplyRetiresAnAbandonedLabel(t *testing.T) {
+	cfg := mustParse(t, `
+services:
+  a:
+    command: /usr/bin/true
+    label: keep.old
+`)
+	rt := newTestRuntime(t)
+	m := testManager(t, cfg, rt)
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	m.Cfg.Services[0].Label = "keep.new"
+
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(rt.dir, "keep.old.unit")); !os.IsNotExist(err) {
+		t.Error("the abandoned label's artifact should have been retired")
+	}
+	if !rt.didCall("forget keep.old") {
+		t.Errorf("the abandoned label should have been forgotten: %v", rt.calls)
+	}
+	if _, ok := rt.units["keep.new"]; !ok {
+		t.Error("the Service should be running under its new label")
+	}
+}
+
+// The mixed swap: a scheduled Service and a resident one trade labels. The
+// scheduled Service's old timer is genuinely abandoned, but its old .service
+// path now belongs to the resident Service, so retiring the timer must not
+// take the whole label down with it.
+func TestApplyRetiresOneArtifactWithoutStoppingItsSurvivingSibling(t *testing.T) {
+	cfg := mustParse(t, `
+services:
+  asrv:
+    command: /usr/bin/true
+    label: keep.two
+  zjob:
+    type: scheduled
+    command: /usr/bin/true
+    label: keep.one
+    schedule:
+      interval: 1h
+`)
+	rt := newTestRuntime(t)
+	rt.perUnit = 2 // the scheduled Service renders two files
+	m := testManager(t, cfg, rt)
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Services reconcile in name order, so the resident Service takes the
+	// label over before the scheduled one retires its leftover timer: the
+	// retirement has to leave a unit alone that is already live.
+	// Swap the labels, and let the resident Service render a single file.
+	rt.perUnit = 1
+	for i := range m.Cfg.Services {
+		switch m.Cfg.Services[i].Name {
+		case "zjob":
+			m.Cfg.Services[i].Label = "keep.two"
+		case "asrv":
+			m.Cfg.Services[i].Label = "keep.one"
+		}
+	}
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The abandoned timer is gone.
+	if _, err := os.Stat(filepath.Join(rt.dir, "keep.one.timer")); !os.IsNotExist(err) {
+		t.Error("the abandoned timer should have been retired")
+	}
+	// The label's other artifact was taken over, not abandoned.
+	if _, err := os.Stat(filepath.Join(rt.dir, "keep.one.unit")); err != nil {
+		t.Errorf("keep.one.unit now belongs to another Service: %v", err)
+	}
+	if _, ok := rt.units["keep.one"]; !ok {
+		t.Error("retiring a sibling artifact stopped the unit that took the label over")
+	}
+}
+
+// Artifacts on disk are not proof of what is running. If one of a Service's
+// files is deleted by hand while its process keeps going, pruning that
+// Service must still clear every unit the label could have, not just the
+// files that happen to be left.
+func TestApplyPrunesAWholeLabelWhenNothingClaimsIt(t *testing.T) {
+	cfg := mustParse(t, `
+services:
+  job:
+    type: scheduled
+    command: /usr/bin/true
+    schedule:
+      interval: 1h
+`)
+	rt := newTestRuntime(t)
+	rt.perUnit = 2
+	m := testManager(t, cfg, rt)
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	// Something is live under this label, and one of its artifacts is gone.
+	rt.running("keep.job", 4242)
+	if err := os.Remove(filepath.Join(rt.dir, "keep.job.unit")); err != nil {
+		t.Fatal(err)
+	}
+
+	m.Cfg.Services = m.Cfg.Services[:0]
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rt.units["keep.job"]; ok {
+		t.Error("pruning an abandoned label must stop what is still running under it")
+	}
+	if _, err := os.Stat(filepath.Join(rt.dir, "keep.job.timer")); !os.IsNotExist(err) {
+		t.Error("the remaining artifact should still be deleted")
+	}
 }

@@ -69,15 +69,16 @@ func (m *Manager) ComputePlan() (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	rendered, claimed, err := m.allArtifacts()
+	if err != nil {
+		return Plan{}, err
+	}
 
 	var plan Plan
 	for i := range m.Cfg.Services {
 		s := &m.Cfg.Services[i]
 		label := s.EffectiveLabel()
-		desired, err := m.Artifacts(s)
-		if err != nil {
-			return Plan{}, err
-		}
+		desired := rendered[s.Name]
 		sp := ServicePlan{Name: s.Name, Label: label}
 
 		var missing, differing []string
@@ -99,6 +100,20 @@ func (m *Manager) ComputePlan() (Plan, error) {
 				strings.Join(differing, ", ")
 		default:
 			sp.Kind = ChangeNoop
+		}
+
+		// Artifacts the Service's old shape left behind are apply's to delete,
+		// so diff has to say so.
+		if stale := staleArtifacts(managed, s.Name, claimed); len(stale) > 0 {
+			names := make([]string, 0, len(stale))
+			for _, a := range stale {
+				names = append(names, filepath.Base(a.Path))
+			}
+			if sp.Kind == ChangeNoop {
+				sp.Kind = ChangeUpdate
+			}
+			sp.Reason = appendReason(sp.Reason, "retires artifacts this Service no longer uses: "+
+				strings.Join(names, ", "))
 		}
 
 		isHeld := held[label]

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 )
 
@@ -19,8 +20,13 @@ func DefaultConfigPath() string {
 	return filepath.Join(home, ".config", "keep", "config.yaml")
 }
 
-// DefaultLogDir is the convention directory for service logs.
+// DefaultLogDir is the convention directory for service logs. Services log to
+// files on both OSes — keep never hands a Service's output to journald — so
+// `keep logs`, rotation, and the web UI work the same everywhere.
 func DefaultLogDir() string {
+	if goruntime.GOOS == "linux" {
+		return filepath.Join(StateDir(), "logs")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return filepath.Join("Library", "Logs", "keep")
@@ -32,6 +38,16 @@ func DefaultLogDir() string {
 // e.g. the per-service update locks (U8). Serve keeps its own state file here
 // too (W6).
 func StateDir() string {
+	if goruntime.GOOS == "linux" {
+		if x := os.Getenv("XDG_STATE_HOME"); x != "" {
+			return filepath.Join(x, "keep")
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return filepath.Join(".local", "state", "keep")
+		}
+		return filepath.Join(home, ".local", "state", "keep")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return filepath.Join("Library", "Application Support", "keep")

@@ -2,6 +2,7 @@ package keep
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -224,5 +225,79 @@ func TestDoctorSilentWithoutVersionCommand(t *testing.T) {
 	}
 	if findingsContain(findings, "version") {
 		t.Fatalf("version finding for a Service that declares none: %+v", findings)
+	}
+}
+
+// A doctor that fails with a raw "cannot reach the service manager" error
+// withholds the one finding that says how to fix exactly that.
+func TestDoctorReportsRuntimeDiagnosisWhenTheRuntimeIsUnusable(t *testing.T) {
+	fake := newTestRuntime(t)
+	fake.heldErr = errors.New("Failed to connect to bus: No medium found")
+	rt := diagnosingRuntime{fakeRuntime: fake, diags: []runtime.Diagnosis{{
+		Severity: runtime.SevError,
+		Problem:  "systemctl --user is not reachable",
+		Fix:      "log in as this user, or enable lingering",
+	}}}
+	m := testManager(t, mustParse(t, oneResident(t)), rt)
+
+	findings, err := m.Doctor()
+	if err != nil {
+		t.Fatalf("the diagnosis is the answer, not an error: %v", err)
+	}
+	if !findingsContain(findings, "not reachable") {
+		t.Fatalf("expected the runtime diagnosis, got %+v", findings)
+	}
+	if findings[0].Severity != SevError {
+		t.Errorf("severity = %q, want error", findings[0].Severity)
+	}
+}
+
+// Without a diagnosis to offer, the underlying failure must still surface.
+func TestDoctorStillFailsWhenTheRuntimeCannotExplainItself(t *testing.T) {
+	fake := newTestRuntime(t)
+	fake.heldErr = errors.New("something broke")
+	m := testManager(t, mustParse(t, oneResident(t)), fake)
+
+	if _, err := m.Doctor(); err == nil {
+		t.Fatal("expected the runtime error to surface")
+	}
+}
+
+// An adapter's environment findings come first: they explain every
+// per-Service symptom under them.
+func TestDoctorPutsRuntimeFindingsFirst(t *testing.T) {
+	rt := diagnosingRuntime{fakeRuntime: newTestRuntime(t), diags: []runtime.Diagnosis{{
+		Severity: runtime.SevWarning, Problem: "lingering is off", Fix: "enable-linger",
+	}}}
+	m := testManager(t, mustParse(t, oneResident(t)), rt)
+
+	findings, err := m.Doctor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) == 0 || findings[0].Problem != "lingering is off" {
+		t.Fatalf("runtime findings should lead, got %+v", findings)
+	}
+	if findings[0].Service != "" {
+		t.Errorf("a runtime finding names no Service, got %q", findings[0].Service)
+	}
+}
+
+// A warning explains nothing about why a runtime query failed, so swallowing
+// the error behind one would hide a real failure.
+func TestDoctorSurfacesErrorsAWarningDoesNotExplain(t *testing.T) {
+	fake := newTestRuntime(t)
+	fake.heldErr = errors.New("something else broke")
+	rt := diagnosingRuntime{fakeRuntime: fake, diags: []runtime.Diagnosis{{
+		Severity: runtime.SevWarning, Problem: "lingering is off", Fix: "enable-linger",
+	}}}
+	m := testManager(t, mustParse(t, oneResident(t)), rt)
+
+	findings, err := m.Doctor()
+	if err == nil {
+		t.Fatal("a warning must not absorb an unrelated runtime failure")
+	}
+	if !findingsContain(findings, "lingering is off") {
+		t.Errorf("the warning should still be reported alongside the error: %+v", findings)
 	}
 }

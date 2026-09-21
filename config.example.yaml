@@ -7,12 +7,15 @@
 #   - env_files: dotenv files keep parses at fork time; uncommitted, may hold secrets.
 #   - env:       literal, non-secret key/values; committed.
 #   precedence (low -> high):
-#     launchd base < global env_files < service env_files < global env < service env
+#     runtime base < global env_files < service env_files < global env < service env
 
 defaults:
   # env_files:
   #   - ~/.config/keep/secrets.env   # dotenv; uncommitted; may hold secrets
-  log_dir: ~/Library/Logs/keep       # per-service logs derive from the service name
+  # Per-service logs derive from the service name. Omit log_dir to take the
+  # per-OS default: ~/Library/Logs/keep on macOS, ~/.local/state/keep/logs on
+  # Linux.
+  log_dir: ~/Library/Logs/keep
   # Opportunistic log rotation (off by default); runs on keep invocations.
   rotation:
     enabled: false
@@ -52,6 +55,10 @@ services:
     command: ~/.local/bin/opencode-db-backup
     schedule:
       calendar: { hour: 2, minute: 30 }   # daily 02:30 (alternatively: interval: 6h)
+      # calendar times mean the same thing on both OSes. An interval is exact
+      # on macOS and approximate on Linux: systemd measures the gap from the
+      # start of each run, so a run that takes a minute pushes the next fire
+      # a minute later.
 
   # keep's own web management UI (see docs/prd-web.md). keep manages the
   # server that manages keep: `keep serve` reads its auth secrets from the

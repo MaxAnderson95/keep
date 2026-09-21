@@ -1,0 +1,14 @@
+[Unit]
+Description=keep service backup
+
+[Service]
+Type=oneshot
+ExecStart=/opt/keep/bin/keep fork backup
+StandardOutput=append:/home/m/.local/state/keep/logs/backup.out.log
+StandardError=append:/home/m/.local/state/keep/logs/backup.err.log
+
+[X-Keep]
+Managed=true
+Service=backup
+Version=1.2.3
+Path=/opt/keep/bin/keep

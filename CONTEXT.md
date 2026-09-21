@@ -12,8 +12,8 @@ generate, install, and control. The single unit of everything keep does.
 _Avoid_: daemon, job, agent (those name the launchd mechanism, not your declared intent).
 
 **Runtime**:
-The OS service manager keep drives — launchd on macOS, systemd next — reached through exactly one
-adapter. Everything above that adapter speaks in Services; only the adapter knows unit files,
+The OS service manager keep drives — launchd on macOS, the systemd user manager on Linux —
+reached through exactly one adapter. Everything above that adapter speaks in Services; only the adapter knows unit files,
 domains, and control commands.
 _Avoid_: init system, supervisor, backend.
 

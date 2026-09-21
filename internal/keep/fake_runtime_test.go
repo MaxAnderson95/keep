@@ -24,6 +24,7 @@ type fakeRuntime struct {
 	held    map[string]bool         // label -> persistently held
 	units   map[string]runtime.Info // label -> live state (present == tracked)
 	fail    map[string]error        // operation string -> injected failure
+	heldErr error                   // injected failure for Held
 	nextPID int
 	calls   []string // ordered call log for assertions
 }
@@ -167,13 +168,33 @@ func (f *fakeRuntime) kick(op, label string) error {
 	return nil
 }
 
-func (f *fakeRuntime) Forget(ctx context.Context, label string) error {
+// Forget honours the artifact scoping the way a real adapter must: forgetting
+// only a secondary artifact leaves the label's live unit alone, because that
+// unit may have been taken over by another Service.
+func (f *fakeRuntime) Forget(ctx context.Context, label string, paths []string) error {
 	if err := f.record("forget", label); err != nil {
 		return err
+	}
+	if !forgetsPrimaryUnit(label, paths) {
+		return nil
 	}
 	delete(f.units, label)
 	delete(f.held, label)
 	return nil
+}
+
+// An empty path list means the whole label; otherwise only the ".unit" file
+// stands for the label's live unit.
+func forgetsPrimaryUnit(label string, paths []string) bool {
+	if len(paths) == 0 {
+		return true
+	}
+	for _, p := range paths {
+		if filepath.Base(p) == label+".unit" {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakeRuntime) Info(t runtime.Target) (runtime.Info, error) {
@@ -184,6 +205,9 @@ func (f *fakeRuntime) Info(t runtime.Target) (runtime.Info, error) {
 }
 
 func (f *fakeRuntime) Held() (map[string]bool, error) {
+	if f.heldErr != nil {
+		return nil, f.heldErr
+	}
 	out := map[string]bool{}
 	for k, v := range f.held {
 		if v {
@@ -203,6 +227,16 @@ func (f *fakeRuntime) didCall(substr string) bool {
 	}
 	return false
 }
+
+// diagnosingRuntime is a fake that also implements runtime.Diagnoser, the way
+// the systemd adapter does. The plain fakeRuntime deliberately does not, so
+// both sides of doctor's optional-capability check are exercised.
+type diagnosingRuntime struct {
+	*fakeRuntime
+	diags []runtime.Diagnosis
+}
+
+func (d diagnosingRuntime) Diagnose() []runtime.Diagnosis { return d.diags }
 
 // running marks a label as live without going through Load, for tests that
 // need a specific PID or a state keep itself would not produce.

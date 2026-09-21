@@ -1,0 +1,17 @@
+[Unit]
+Description=keep timer backup
+
+[Timer]
+OnActiveSec=21600
+OnUnitActiveSec=21600
+AccuracySec=1s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+
+[X-Keep]
+Managed=true
+Service=backup
+Version=1.2.3
+Path=/opt/keep/bin/keep
