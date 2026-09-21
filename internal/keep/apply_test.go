@@ -506,3 +506,40 @@ services:
 		t.Error("retiring a sibling artifact stopped the unit that took the label over")
 	}
 }
+
+// Artifacts on disk are not proof of what is running. If one of a Service's
+// files is deleted by hand while its process keeps going, pruning that
+// Service must still clear every unit the label could have, not just the
+// files that happen to be left.
+func TestApplyPrunesAWholeLabelWhenNothingClaimsIt(t *testing.T) {
+	cfg := mustParse(t, `
+services:
+  job:
+    type: scheduled
+    command: /usr/bin/true
+    schedule:
+      interval: 1h
+`)
+	rt := newTestRuntime(t)
+	rt.perUnit = 2
+	m := testManager(t, cfg, rt)
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	// Something is live under this label, and one of its artifacts is gone.
+	rt.running("keep.job", 4242)
+	if err := os.Remove(filepath.Join(rt.dir, "keep.job.unit")); err != nil {
+		t.Fatal(err)
+	}
+
+	m.Cfg.Services = m.Cfg.Services[:0]
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rt.units["keep.job"]; ok {
+		t.Error("pruning an abandoned label must stop what is still running under it")
+	}
+	if _, err := os.Stat(filepath.Join(rt.dir, "keep.job.timer")); !os.IsNotExist(err) {
+		t.Error("the remaining artifact should still be deleted")
+	}
+}

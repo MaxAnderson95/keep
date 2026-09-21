@@ -51,6 +51,7 @@ func (m *Manager) Apply() (ApplyResult, error) {
 	if err != nil {
 		return res, err
 	}
+	claimedLabels := m.claimedLabels()
 
 	for i := range m.Cfg.Services {
 		s := &m.Cfg.Services[i]
@@ -75,7 +76,7 @@ func (m *Manager) Apply() (ApplyResult, error) {
 		// that a Service which is supposed to be stopped stays stopped.
 		stale := staleArtifacts(managed, s.Name, claimed)
 		if len(stale) > 0 {
-			if err := m.retire(stale); err != nil {
+			if err := m.retire(stale, claimedLabels); err != nil {
 				return res, fmt.Errorf("service %q: %w", s.Name, err)
 			}
 			// Forget clears the runtime's persistent records for a label, and
@@ -135,7 +136,7 @@ func (m *Manager) Apply() (ApplyResult, error) {
 		}
 	}
 
-	removed, err := m.prune(plan.Removes, managed, claimed)
+	removed, err := m.prune(plan.Removes, managed, claimed, claimedLabels)
 	res.Removed = removed
 	if err != nil {
 		return res, err
@@ -157,7 +158,7 @@ func (m *Manager) Apply() (ApplyResult, error) {
 // prune removes the artifacts of Services that left the Config. An artifact a
 // declared Service has since claimed is left alone: the file was taken over,
 // not abandoned, and it has already been rewritten for its new owner.
-func (m *Manager) prune(removes []ServicePlan, managed []ManagedArtifact, claimed map[string]bool) ([]string, error) {
+func (m *Manager) prune(removes []ServicePlan, managed []ManagedArtifact, claimed, claimedLabels map[string]bool) ([]string, error) {
 	if len(removes) == 0 {
 		return nil, nil
 	}
@@ -170,7 +171,7 @@ func (m *Manager) prune(removes []ServicePlan, managed []ManagedArtifact, claime
 				abandoned = append(abandoned, a)
 			}
 		}
-		if err := m.forgetArtifacts(rm.Label, abandoned); err != nil {
+		if err := m.forgetArtifacts(rm.Label, abandoned, claimedLabels[rm.Label]); err != nil {
 			return removed, fmt.Errorf("removing orphan %q: %w", rm.Label, err)
 		}
 		removed = append(removed, rm.Name)
@@ -180,38 +181,55 @@ func (m *Manager) prune(removes []ServicePlan, managed []ManagedArtifact, claime
 
 // retire removes artifacts a Service no longer renders, and stops and clears
 // whatever the runtime was still doing with them.
-func (m *Manager) retire(stale []ManagedArtifact) error {
+func (m *Manager) retire(stale []ManagedArtifact, claimedLabels map[string]bool) error {
 	labels, grouped := byLabel(stale)
 	for _, label := range labels {
-		if err := m.forgetArtifacts(label, grouped[label]); err != nil {
+		if err := m.forgetArtifacts(label, grouped[label], claimedLabels[label]); err != nil {
 			return fmt.Errorf("retiring %q: %w", label, err)
 		}
 	}
 	return nil
 }
 
-// forgetArtifacts deletes the given artifacts and then has the runtime forget
-// exactly those, never the whole label: a sibling artifact under the same
-// label may still be in service, sometimes for a different Service. The files
-// go first, so a runtime that re-reads disk while forgetting does not find
-// them still there; a failed Forget puts them back, because they are the only
-// record that would let the next apply retry.
-func (m *Manager) forgetArtifacts(label string, arts []ManagedArtifact) error {
-	if len(arts) == 0 {
+// forgetArtifacts deletes the given artifacts and has the runtime forget what
+// ran them. The files go first, so a runtime that re-reads disk while
+// forgetting does not find them still there; a failed Forget puts them back,
+// because they are the only record that would let the next apply retry.
+//
+// stillClaimed says whether a declared Service still uses this label. When one
+// does, only the named artifacts may be forgotten: a sibling under the same
+// label is live, and sometimes belongs to a different Service. When none does,
+// the label is abandoned outright and the adapter is asked to clear every unit
+// form it could have emitted — the artifacts on disk are not proof of what is
+// running, since one of them may have been deleted by hand while its process
+// kept going.
+func (m *Manager) forgetArtifacts(label string, arts []ManagedArtifact, stillClaimed bool) error {
+	if len(arts) == 0 && stillClaimed {
 		return nil
 	}
-	paths := make([]string, 0, len(arts))
+	var paths []string
 	for _, a := range arts {
 		if err := os.Remove(a.Path); err != nil && !os.IsNotExist(err) {
 			return err
 		}
-		paths = append(paths, a.Path)
+		if stillClaimed {
+			paths = append(paths, a.Path)
+		}
 	}
 	if err := m.rt.Forget(context.Background(), label, paths); err != nil {
 		restore(arts)
 		return err
 	}
 	return nil
+}
+
+// claimedLabels is every label a declared Service currently uses.
+func (m *Manager) claimedLabels() map[string]bool {
+	out := make(map[string]bool, len(m.Cfg.Services))
+	for i := range m.Cfg.Services {
+		out[m.Cfg.Services[i].EffectiveLabel()] = true
+	}
+	return out
 }
 
 // loadService releases any hold and has the runtime pick the Service up from
