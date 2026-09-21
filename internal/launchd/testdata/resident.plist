@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>keep.web</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/keep/bin/keep</string>
+		<string>--config</string>
+		<string>/home/m/keep &amp; co.yaml</string>
+		<string>fork</string>
+		<string>web</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/home/m/logs/web.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>/home/m/logs/web.err.log</string>
+	<key>KeepManaged</key>
+	<true/>
+	<key>KeepService</key>
+	<string>web</string>
+	<key>KeepVersion</key>
+	<string>1.2.3</string>
+	<key>KeepPath</key>
+	<string>/opt/keep/bin/keep</string>
+</dict>
+</plist>

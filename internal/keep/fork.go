@@ -9,9 +9,10 @@ import (
 	"github.com/MaxAnderson95/keep/internal/config"
 )
 
-// Fork is the hidden launchd-only launcher (ADR-0002). It assembles the
-// Service's environment, sets umask and working directory, then execs the real
-// command — replacing itself so launchd/KeepAlive tracks the real PID.
+// Fork is the hidden launcher the runtime starts, never a human (ADR-0002). It
+// assembles the Service's environment, sets umask and working directory, then
+// execs the real command — replacing itself so the runtime's supervision
+// tracks the real PID.
 //
 // Fork only returns on failure; on success it never returns (the process image
 // is replaced). Errors are surfaced to the Service's stderr log.

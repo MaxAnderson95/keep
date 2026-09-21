@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>keep.backup</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/keep/bin/keep</string>
+		<string>fork</string>
+		<string>backup</string>
+	</array>
+	<key>StandardOutPath</key>
+	<string>/home/m/logs/backup.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>/home/m/logs/backup.err.log</string>
+	<key>StartInterval</key>
+	<integer>3600</integer>
+	<key>KeepManaged</key>
+	<true/>
+	<key>KeepService</key>
+	<string>backup</string>
+	<key>KeepVersion</key>
+	<string>1.2.3</string>
+	<key>KeepPath</key>
+	<string>/opt/keep/bin/keep</string>
+</dict>
+</plist>

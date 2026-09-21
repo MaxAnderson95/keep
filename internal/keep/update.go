@@ -100,11 +100,11 @@ func (m *Manager) Update(ctx context.Context, s *config.Service, out io.Writer) 
 
 	// Prior state decides what "restore" means (U4): a Service that was held
 	// (or declared off) updates but stays Down.
-	disabled, err := m.ctl.DisabledSet()
+	held, err := m.rt.Held()
 	if err != nil {
-		return fail(fmt.Errorf("reading launchd disable state: %w", err))
+		return fail(fmt.Errorf("reading runtime hold state: %w", err))
 	}
-	wasDown := disabled[s.EffectiveLabel()] || !s.IsEnabled()
+	wasDown := held[s.EffectiveLabel()] || !s.IsEnabled()
 
 	fmt.Fprintf(w, "==> down %s\n", s.Name)
 	if err := m.Down(ctx, s); err != nil {

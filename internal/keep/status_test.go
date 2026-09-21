@@ -3,7 +3,7 @@ package keep
 import (
 	"testing"
 
-	"github.com/MaxAnderson95/keep/internal/launchd"
+	"github.com/MaxAnderson95/keep/internal/runtime"
 )
 
 func statusFor(t *testing.T, m *Manager, name string) ServiceStatus {
@@ -19,9 +19,9 @@ func statusFor(t *testing.T, m *Manager, name string) ServiceStatus {
 }
 
 func TestStatusRunning(t *testing.T) {
-	ctl := newFakeController()
-	ctl.loaded["keep.web"] = launchd.PrintInfo{Loaded: true, State: "running", PID: 4242, HasPID: true}
-	m := testManager(t, mustParse(t, oneResident(t)), ctl)
+	rt := newTestRuntime(t)
+	rt.running("keep.web", 4242)
+	m := testManager(t, mustParse(t, oneResident(t)), rt)
 	st := statusFor(t, m, "web")
 	if st.Health != HealthRunning {
 		t.Errorf("Health = %q, want running", st.Health)
@@ -32,9 +32,9 @@ func TestStatusRunning(t *testing.T) {
 }
 
 func TestStatusHeld(t *testing.T) {
-	ctl := newFakeController()
-	ctl.disabled["keep.web"] = true
-	m := testManager(t, mustParse(t, oneResident(t)), ctl)
+	rt := newTestRuntime(t)
+	rt.held["keep.web"] = true
+	m := testManager(t, mustParse(t, oneResident(t)), rt)
 	st := statusFor(t, m, "web")
 	if st.Health != HealthHeld || !st.Drift || !st.Held {
 		t.Errorf("want held+drift, got %+v", st)
@@ -42,8 +42,8 @@ func TestStatusHeld(t *testing.T) {
 }
 
 func TestStatusNotLoadedIsDrift(t *testing.T) {
-	ctl := newFakeController() // enabled, not disabled, not loaded
-	m := testManager(t, mustParse(t, oneResident(t)), ctl)
+	rt := newTestRuntime(t) // enabled, not disabled, not loaded
+	m := testManager(t, mustParse(t, oneResident(t)), rt)
 	st := statusFor(t, m, "web")
 	if st.Health != HealthNotLoaded || !st.Drift {
 		t.Errorf("want not-loaded+drift, got %+v", st)
@@ -57,7 +57,7 @@ services:
     command: /usr/bin/true
     enabled: false
 `)
-	st := statusFor(t, testManager(t, cfg, newFakeController()), "web")
+	st := statusFor(t, testManager(t, cfg, newTestRuntime(t)), "web")
 	if st.Health != HealthDeclaredOff || st.Drift {
 		t.Errorf("want declared-off, no drift, got %+v", st)
 	}
@@ -72,17 +72,17 @@ services:
     schedule:
       interval: 6h
 `)
-	ctl := newFakeController()
+	rt := newTestRuntime(t)
 	// A scheduled service that is loaded but waiting (no live pid).
-	ctl.loaded["keep.job"] = launchd.PrintInfo{Loaded: true, State: "waiting"}
-	st := statusFor(t, testManager(t, cfg, ctl), "job")
+	rt.units["keep.job"] = runtime.Info{State: runtime.StateStopped}
+	st := statusFor(t, testManager(t, cfg, rt), "job")
 	if st.Health != HealthIdle {
 		t.Errorf("Health = %q, want idle", st.Health)
 	}
 }
 
 func TestStatusUnknownService(t *testing.T) {
-	m := testManager(t, mustParse(t, oneResident(t)), newFakeController())
+	m := testManager(t, mustParse(t, oneResident(t)), newTestRuntime(t))
 	if _, err := m.Status([]string{"nope"}); err == nil {
 		t.Error("expected error for unknown service")
 	}

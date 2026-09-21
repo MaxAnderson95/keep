@@ -6,12 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/MaxAnderson95/keep/internal/runtime"
 )
 
 func intp(i int) *int { return &i }
 
-func residentJob() Job {
-	return Job{
+func residentJob() runtime.Job {
+	return runtime.Job{
 		Label:             "keep.web",
 		ProgramArguments:  []string{"/Users/me/.local/bin/keep", "fork", "web"},
 		RunAtLoad:         true,
@@ -25,15 +27,15 @@ func residentJob() Job {
 }
 
 func TestRenderDeterministic(t *testing.T) {
-	a := Render(residentJob())
-	b := Render(residentJob())
+	a := renderPlist(residentJob())
+	b := renderPlist(residentJob())
 	if string(a) != string(b) {
 		t.Fatal("Render is not deterministic")
 	}
 }
 
 func TestRenderResidentContents(t *testing.T) {
-	out := string(Render(residentJob()))
+	out := string(renderPlist(residentJob()))
 	wantContains := []string{
 		"<key>Label</key>",
 		"<string>keep.web</string>",
@@ -59,13 +61,13 @@ func TestRenderResidentContents(t *testing.T) {
 }
 
 func TestRenderScheduledInterval(t *testing.T) {
-	j := Job{
+	j := runtime.Job{
 		Label:            "keep.backup",
 		ProgramArguments: []string{"/keep", "fork", "backup"},
 		StartInterval:    21600,
 		Service:          "backup",
 	}
-	out := string(Render(j))
+	out := string(renderPlist(j))
 	if !strings.Contains(out, "<key>StartInterval</key>") || !strings.Contains(out, "<integer>21600</integer>") {
 		t.Errorf("missing StartInterval:\n%s", out)
 	}
@@ -75,16 +77,16 @@ func TestRenderScheduledInterval(t *testing.T) {
 }
 
 func TestRenderScheduledCalendar(t *testing.T) {
-	j := Job{
+	j := runtime.Job{
 		Label:            "keep.backup",
 		ProgramArguments: []string{"/keep", "fork", "backup"},
-		StartCalendar: []CalendarInterval{
+		StartCalendar: []runtime.CalendarInterval{
 			{Hour: intp(2), Minute: intp(30)},
 			{Hour: intp(14), Minute: intp(0)},
 		},
 		Service: "backup",
 	}
-	out := string(Render(j))
+	out := string(renderPlist(j))
 	if !strings.Contains(out, "<key>StartCalendarInterval</key>") {
 		t.Fatalf("missing StartCalendarInterval:\n%s", out)
 	}
@@ -98,17 +100,20 @@ func TestRenderScheduledCalendar(t *testing.T) {
 }
 
 func TestMarkerExtraction(t *testing.T) {
-	data := Render(residentJob())
-	if !IsManaged(data) {
-		t.Error("IsManaged should be true for generated plist")
+	m := readMarkers(renderPlist(residentJob()))
+	if !m.Managed {
+		t.Error("Managed should be true for a generated plist")
 	}
-	if got := MarkerService(data); got != "web" {
-		t.Errorf("MarkerService = %q, want web", got)
+	if m.Label != "keep.web" {
+		t.Errorf("Label = %q, want keep.web", m.Label)
 	}
-	if got := MarkerKeepPath(data); got != "/Users/me/.local/bin/keep" {
-		t.Errorf("MarkerKeepPath = %q", got)
+	if m.Service != "web" {
+		t.Errorf("Service = %q, want web", m.Service)
 	}
-	if IsManaged([]byte("<plist><dict></dict></plist>")) {
+	if m.KeepPath != "/Users/me/.local/bin/keep" {
+		t.Errorf("KeepPath = %q", m.KeepPath)
+	}
+	if readMarkers([]byte("<plist><dict></dict></plist>")).Managed {
 		t.Error("unmanaged plist must not be detected as managed")
 	}
 }
@@ -116,16 +121,28 @@ func TestMarkerExtraction(t *testing.T) {
 func TestMarkerExtractionUnescapesXML(t *testing.T) {
 	j := residentJob()
 	j.KeepPath = "/Users/me/A&B/keep"
-	data := Render(j)
-	if got := MarkerKeepPath(data); got != j.KeepPath {
-		t.Errorf("MarkerKeepPath = %q, want %q", got, j.KeepPath)
+	if got := readMarkers(renderPlist(j)).KeepPath; got != j.KeepPath {
+		t.Errorf("KeepPath = %q, want %q", got, j.KeepPath)
+	}
+}
+
+// A LaunchAgents directory holds more than plists; only this adapter's own
+// file type can carry its markers.
+func TestReadMarkersIgnoresNonPlistFiles(t *testing.T) {
+	data := renderPlist(residentJob())
+	r := &Runtime{artifactDir: "/agents"}
+	if m := r.ReadMarkers("/agents/keep.web.plist", data); !m.Managed {
+		t.Error("a generated plist should be managed")
+	}
+	if m := r.ReadMarkers("/agents/keep.web.json", data); m.Managed {
+		t.Error("a non-plist file must never be reported as managed")
 	}
 }
 
 func TestXMLEscaping(t *testing.T) {
 	j := residentJob()
 	j.ProgramArguments = []string{"/keep", "fork", "a&b<c>"}
-	out := string(Render(j))
+	out := string(renderPlist(j))
 	if !strings.Contains(out, "a&amp;b&lt;c&gt;") {
 		t.Errorf("special chars not escaped:\n%s", out)
 	}
@@ -136,15 +153,15 @@ func TestPlutilLint(t *testing.T) {
 	if _, err := exec.LookPath("plutil"); err != nil {
 		t.Skip("plutil not available")
 	}
-	jobs := map[string]Job{
+	jobs := map[string]runtime.Job{
 		"resident": residentJob(),
 		"interval": {Label: "keep.i", ProgramArguments: []string{"/keep", "fork", "i"}, StartInterval: 3600, Service: "i"},
-		"calendar": {Label: "keep.c", ProgramArguments: []string{"/keep", "fork", "c"}, StartCalendar: []CalendarInterval{{Hour: intp(2), Minute: intp(30)}}, Service: "c"},
+		"calendar": {Label: "keep.c", ProgramArguments: []string{"/keep", "fork", "c"}, StartCalendar: []runtime.CalendarInterval{{Hour: intp(2), Minute: intp(30)}}, Service: "c"},
 	}
 	dir := t.TempDir()
 	for name, j := range jobs {
 		p := filepath.Join(dir, name+".plist")
-		if err := os.WriteFile(p, Render(j), 0o644); err != nil {
+		if err := os.WriteFile(p, renderPlist(j), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		out, err := exec.Command("plutil", "-lint", p).CombinedOutput()

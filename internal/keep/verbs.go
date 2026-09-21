@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/MaxAnderson95/keep/internal/config"
-	"github.com/MaxAnderson95/keep/internal/launchd"
 )
 
 // Targets resolves a list of Service names to Services. An empty list means
@@ -33,38 +32,34 @@ func (m *Manager) Targets(names []string) ([]*config.Service, error) {
 // the process is actually running; scheduled Services are left to fire on their
 // schedule rather than being force-run.
 func (m *Manager) Up(s *config.Service) error {
-	label := s.EffectiveLabel()
-	if err := m.ctl.Enable(label); err != nil {
+	target := m.target(s)
+	if err := m.rt.Release(target); err != nil {
 		return err
 	}
-	if err := m.ctl.Bootstrap(m.PlistPath(s)); err != nil {
+	if err := m.rt.Load(context.Background(), target); err != nil {
 		return err
 	}
 	if !s.IsScheduled() {
-		info, err := m.ctl.Info(label)
-		if err == nil && !isRunning(info) {
-			_ = m.ctl.Kickstart(label, false)
+		info, err := m.rt.Info(target)
+		if err == nil && !info.Running() {
+			_ = m.rt.Start(target)
 		}
 	}
 	return nil
 }
 
-// Down persistently holds a Service down: disable + bootout. It stays down
-// across reboot and apply until Up (ADR-0003). It returns once the Service has
-// actually stopped, so ctx is what bounds a caller that cannot wait that long.
+// Down persistently holds a Service down. It stays down across reboot and
+// apply until Up (ADR-0003). It returns once the Service has actually stopped,
+// so ctx is what bounds a caller that cannot wait that long.
 func (m *Manager) Down(ctx context.Context, s *config.Service) error {
-	label := s.EffectiveLabel()
-	if err := m.ctl.Disable(label); err != nil {
+	target := m.target(s)
+	if err := m.rt.Hold(target); err != nil {
 		return err
 	}
-	return m.ctl.Bootout(ctx, label)
+	return m.rt.Unload(ctx, target)
 }
 
-// Bounce restarts a running Service in place (kickstart -k).
+// Bounce restarts a running Service in place.
 func (m *Manager) Bounce(s *config.Service) error {
-	return m.ctl.Kickstart(s.EffectiveLabel(), true)
-}
-
-func isRunning(info launchd.PrintInfo) bool {
-	return info.Loaded && (info.State == "running" || info.HasPID && info.PID > 0)
+	return m.rt.Restart(m.target(s))
 }

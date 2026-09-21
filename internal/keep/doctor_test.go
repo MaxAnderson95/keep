@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/MaxAnderson95/keep/internal/config"
-	"github.com/MaxAnderson95/keep/internal/launchd"
+	"github.com/MaxAnderson95/keep/internal/runtime"
 )
 
 func findingsContain(fs []Finding, substr string) bool {
@@ -21,7 +21,7 @@ func findingsContain(fs []Finding, substr string) bool {
 
 func TestDoctorCleanAfterApply(t *testing.T) {
 	cfg := mustParse(t, oneResident(t)) // command /usr/bin/true exists
-	m := testManager(t, cfg, newFakeController())
+	m := testManager(t, cfg, newTestRuntime(t))
 	if _, err := m.Apply(); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ services:
   web:
     command: /definitely/not/a/real/binary-xyz
 `)
-	m := testManager(t, cfg, newFakeController())
+	m := testManager(t, cfg, newTestRuntime(t))
 	if _, err := m.Apply(); err != nil {
 		t.Fatal(err)
 	}
@@ -55,17 +55,13 @@ services:
 
 func TestDoctorOrphan(t *testing.T) {
 	cfg := mustParse(t, oneResident(t))
-	ctl := newFakeController()
-	m := testManager(t, cfg, ctl)
+	rt := newTestRuntime(t)
+	m := testManager(t, cfg, rt)
 	if _, err := m.Apply(); err != nil {
 		t.Fatal(err)
 	}
-	orphan := launchd.Render(launchd.Job{
-		Label:            "keep.ghost",
-		ProgramArguments: []string{"/opt/keep/bin/keep", "fork", "ghost"},
-		Service:          "ghost",
-	})
-	if err := os.WriteFile(m.LaunchAgentsDir()+"/keep.ghost.plist", orphan, 0o644); err != nil {
+	orphan := fakeArtifact("keep.ghost", "ghost", "/opt/keep/bin/keep", "argv=/opt/keep/bin/keep fork ghost\n")
+	if err := os.WriteFile(m.ArtifactDir()+"/keep.ghost.unit", orphan, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	findings, err := m.Doctor()
@@ -79,21 +75,14 @@ func TestDoctorOrphan(t *testing.T) {
 
 func TestDoctorStaleKeepPath(t *testing.T) {
 	cfg := mustParse(t, oneResident(t))
-	ctl := newFakeController()
-	m := testManager(t, cfg, ctl)
+	rt := newTestRuntime(t)
+	m := testManager(t, cfg, rt)
 	// Write an artifact pinned to a different keep path.
-	stale := launchd.Render(launchd.Job{
-		Label:            "keep.web",
-		ProgramArguments: []string{"/old/location/keep", "fork", "web"},
-		RunAtLoad:        true,
-		KeepAlive:        true,
-		Service:          "web",
-		KeepPath:         "/old/location/keep",
-	})
-	if err := os.WriteFile(m.PlistPath(&cfg.Services[0]), stale, 0o644); err != nil {
+	stale := fakeArtifact("keep.web", "web", "/old/location/keep", "argv=/old/location/keep fork web\n")
+	if err := os.WriteFile(artifactPath(t, m, &cfg.Services[0]), stale, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ctl.loaded["keep.web"] = launchd.PrintInfo{Loaded: true, State: "running", PID: 5, HasPID: true}
+	rt.running("keep.web", 5)
 	findings, err := m.Doctor()
 	if err != nil {
 		t.Fatal(err)
@@ -105,12 +94,12 @@ func TestDoctorStaleKeepPath(t *testing.T) {
 
 func TestDoctorNotLoaded(t *testing.T) {
 	cfg := mustParse(t, oneResident(t))
-	m := testManager(t, cfg, newFakeController()) // enabled, not loaded
+	m := testManager(t, cfg, newTestRuntime(t)) // enabled, not loaded
 	if _, err := m.Apply(); err != nil {
 		t.Fatal(err)
 	}
-	// Boot it out behind keep's back.
-	m.ctl.(*fakeController).Bootout(context.Background(), "keep.web")
+	// Stop it behind keep's back.
+	_ = m.rt.Unload(context.Background(), runtime.Target{Label: "keep.web"})
 	findings, err := m.Doctor()
 	if err != nil {
 		t.Fatal(err)
@@ -130,8 +119,8 @@ services:
     command: /usr/bin/true
     version_command: /usr/bin/true --version
 `)
-	ctl := newFakeController()
-	m := testManager(t, cfg, ctl)
+	rt := newTestRuntime(t)
+	m := testManager(t, cfg, rt)
 	if _, err := m.Apply(); err != nil {
 		t.Fatal(err)
 	}
@@ -141,8 +130,8 @@ services:
 
 func livePID(t *testing.T, m *Manager, svc *config.Service) int {
 	t.Helper()
-	info, err := m.ctl.Info(svc.EffectiveLabel())
-	if err != nil || !info.HasPID {
+	info, err := m.rt.Info(m.target(svc))
+	if err != nil || info.PID == 0 {
 		t.Fatalf("no live pid: info=%+v err=%v", info, err)
 	}
 	return info.PID
@@ -205,7 +194,7 @@ services:
     command: /usr/bin/true
     version_command: /definitely/not/a/real/binary-xyz --version
 `)
-	m := testManager(t, cfg, newFakeController())
+	m := testManager(t, cfg, newTestRuntime(t))
 	if _, err := m.Apply(); err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +214,7 @@ services:
 // version-related finding of any kind, including the info one.
 func TestDoctorSilentWithoutVersionCommand(t *testing.T) {
 	cfg := mustParse(t, oneResident(t))
-	m := testManager(t, cfg, newFakeController())
+	m := testManager(t, cfg, newTestRuntime(t))
 	if _, err := m.Apply(); err != nil {
 		t.Fatal(err)
 	}

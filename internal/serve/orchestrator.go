@@ -10,7 +10,7 @@ import (
 )
 
 // orchestrator is the slice of keep.Manager the web layer needs. It exists so
-// handler tests can run against a fake without touching launchd.
+// handler tests can run against a fake without touching the service runtime.
 type orchestrator interface {
 	Targets(names []string) ([]*config.Service, error)
 	Status(names []string) ([]keep.ServiceStatus, error)
