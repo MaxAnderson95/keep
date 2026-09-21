@@ -150,11 +150,13 @@ func printDoctor(c *cli.Context, findings []keep.Finding) {
 		return
 	}
 	for _, f := range findings {
-		svc := f.Service
-		if svc == "" {
-			svc = "-"
+		// A finding about the runtime environment names no Service, and
+		// writing "-" where a name goes reads like a Service called "-".
+		if f.Service == "" {
+			fmt.Fprintf(w, "[%s] %s\n", f.Severity, f.Problem)
+		} else {
+			fmt.Fprintf(w, "[%s] %s: %s\n", f.Severity, f.Service, f.Problem)
 		}
-		fmt.Fprintf(w, "[%s] %s: %s\n", f.Severity, svc, f.Problem)
 		fmt.Fprintf(w, "        fix: %s\n", f.Fix)
 	}
 	fmt.Fprintf(w, "\n%d problem(s) found\n", len(findings))

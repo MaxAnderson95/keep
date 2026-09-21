@@ -18,8 +18,14 @@ builds:
       - CGO_ENABLED=0
     goos:
       - darwin
+      - linux
     goarch:
       - arm64
+      - amd64
+    ignore:
+      # Macs keep runs on are Apple Silicon; Linux gets both architectures.
+      - goos: darwin
+        goarch: amd64
     ldflags:
       - -s -w
       - -X main.version={{ .Version }}

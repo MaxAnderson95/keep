@@ -282,3 +282,19 @@ func TestScanFollowsSymlinkedArtifacts(t *testing.T) {
 	}
 	t.Fatalf("symlinked artifact not found in scan: %+v", managed)
 }
+
+// ~/Library/LaunchAgents always exists, but a Linux machine that has never had
+// a user unit has no ~/.config/systemd/user. Somebody has to create it, and
+// adapters never touch the filesystem.
+func TestApplyCreatesTheArtifactDirectory(t *testing.T) {
+	cfg := mustParse(t, oneResident(t))
+	rt := newFakeRuntime(filepath.Join(t.TempDir(), "units"))
+	m := testManager(t, cfg, rt)
+
+	if _, err := m.Apply(); err != nil {
+		t.Fatalf("apply into a missing artifact directory: %v", err)
+	}
+	if _, err := os.Stat(artifactPath(t, m, &cfg.Services[0])); err != nil {
+		t.Fatalf("artifact not written: %v", err)
+	}
+}

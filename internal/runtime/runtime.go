@@ -60,6 +60,31 @@ type MarkerInfo struct {
 	KeepPath string
 }
 
+// Severity classifies a Diagnosis.
+type Severity string
+
+const (
+	SevError   Severity = "error"
+	SevWarning Severity = "warning"
+	SevInfo    Severity = "info"
+)
+
+// Diagnosis is a read-only problem with the runtime environment itself, as
+// opposed to any one Service.
+type Diagnosis struct {
+	Severity Severity
+	Problem  string
+	Fix      string
+}
+
+// Diagnoser is an optional Runtime capability: the health checks only an
+// adapter can make, because only it knows what its runtime needs to work.
+// `keep doctor` folds them in for an adapter that implements it and asks
+// nothing of one that does not.
+type Diagnoser interface {
+	Diagnose() []Diagnosis
+}
+
 // Runtime is the one seam between keep's orchestration and an OS service
 // runtime. Adapters own rendering, control, and observation; they never touch
 // the filesystem.

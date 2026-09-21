@@ -37,6 +37,13 @@ func (m *Manager) Apply() (ApplyResult, error) {
 	}
 
 	var res ApplyResult
+	// The Manager owns every artifact write, including making somewhere to
+	// write them. ~/Library/LaunchAgents always exists; a machine that has
+	// never had a user unit has no ~/.config/systemd/user.
+	if err := os.MkdirAll(m.ArtifactDir(), 0o755); err != nil {
+		return res, fmt.Errorf("creating artifact directory: %w", err)
+	}
+
 	for i := range m.Cfg.Services {
 		s := &m.Cfg.Services[i]
 		sp := planByName[s.Name]

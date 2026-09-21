@@ -40,6 +40,10 @@ func (m *Manager) Doctor() ([]Finding, error) {
 		return nil, err
 	}
 
+	// Whatever is wrong with the runtime environment itself explains every
+	// per-Service symptom below it, so it goes first.
+	findings = append(findings, m.runtimeFindings()...)
+
 	for i := range m.Cfg.Services {
 		s := &m.Cfg.Services[i]
 		label := s.EffectiveLabel()
@@ -132,6 +136,26 @@ func (m *Manager) Doctor() ([]Finding, error) {
 
 	findings = append(findings, m.orphanFindings(managed)...)
 	return findings, nil
+}
+
+// runtimeFindings asks the adapter what is wrong with the environment it needs
+// — a missing systemd user session, lingering left off. An adapter with
+// nothing OS-specific to check (launchd) implements no Diagnoser and
+// contributes nothing.
+func (m *Manager) runtimeFindings() []Finding {
+	d, ok := m.rt.(runtime.Diagnoser)
+	if !ok {
+		return nil
+	}
+	var findings []Finding
+	for _, diag := range d.Diagnose() {
+		findings = append(findings, Finding{
+			Severity: Severity(diag.Severity),
+			Problem:  diag.Problem,
+			Fix:      diag.Fix,
+		})
+	}
+	return findings
 }
 
 // artifactFindings checks each file the runtime renders for a Service against
