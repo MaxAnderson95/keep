@@ -43,6 +43,10 @@ func (m *Manager) Apply() (ApplyResult, error) {
 	if err := os.MkdirAll(m.ArtifactDir(), 0o755); err != nil {
 		return res, fmt.Errorf("creating artifact directory: %w", err)
 	}
+	managed, err := m.ScanManaged()
+	if err != nil {
+		return res, err
+	}
 
 	for i := range m.Cfg.Services {
 		s := &m.Cfg.Services[i]
@@ -60,6 +64,30 @@ func (m *Manager) Apply() (ApplyResult, error) {
 			if err := writeIfChanged(a.Path, a.Data); err != nil {
 				return res, fmt.Errorf("service %q: %w", s.Name, err)
 			}
+		}
+
+		// Retire artifacts this Service used to have. A scheduled Service that
+		// became resident leaves an enabled timer behind, and that timer keeps
+		// starting the Service — including after a `keep down`, which now
+		// addresses only the resident unit. Retiring comes before the
+		// held and declared-off branches below, because the whole point is
+		// that a Service which is supposed to be stopped stays stopped.
+		stale := staleArtifacts(managed, s.Name, desired)
+		if len(stale) > 0 {
+			if err := m.retire(stale); err != nil {
+				return res, fmt.Errorf("service %q: %w", s.Name, err)
+			}
+			// Forget clears the runtime's persistent records for a label, and
+			// a stale artifact can share the Service's current label, so a
+			// hold may have gone with it. Re-assert it rather than depend on
+			// which way a given runtime's Forget happens to fall.
+			if sp.Held {
+				if err := m.rt.Hold(target); err != nil {
+					return res, fmt.Errorf("service %q: %w", s.Name, err)
+				}
+			}
+			// Whatever the plan said, the Service's shape changed on disk.
+			sp.Kind = ChangeUpdate
 		}
 
 		// Declared off (enabled: false): generate but keep disabled. Not drift.
@@ -106,7 +134,7 @@ func (m *Manager) Apply() (ApplyResult, error) {
 		}
 	}
 
-	removed, err := m.prune(plan.Removes)
+	removed, err := m.prune(plan.Removes, managed)
 	res.Removed = removed
 	if err != nil {
 		return res, err
@@ -125,29 +153,48 @@ func (m *Manager) Apply() (ApplyResult, error) {
 // record that lets the next apply rediscover the orphan — without the restore,
 // a runtime error here would leave a Service running that keep could never see
 // again.
-func (m *Manager) prune(removes []ServicePlan) ([]string, error) {
+func (m *Manager) prune(removes []ServicePlan, managed []ManagedArtifact) ([]string, error) {
 	if len(removes) == 0 {
 		return nil, nil
 	}
-	managed, err := m.ScanManaged()
-	if err != nil {
-		return nil, err
-	}
-	_, byLabel := m.orphanLabels(managed)
+	_, orphaned := m.orphanLabels(managed)
 	var removed []string
 	for _, rm := range removes {
-		for _, a := range byLabel[rm.Label] {
-			if err := os.Remove(a.Path); err != nil && !os.IsNotExist(err) {
-				return removed, fmt.Errorf("removing orphan %q: %w", rm.Label, err)
-			}
-		}
-		if err := m.rt.Forget(context.Background(), rm.Label); err != nil {
-			restore(byLabel[rm.Label])
+		if err := m.forgetLabel(rm.Label, orphaned[rm.Label]); err != nil {
 			return removed, fmt.Errorf("removing orphan %q: %w", rm.Label, err)
 		}
 		removed = append(removed, rm.Name)
 	}
 	return removed, nil
+}
+
+// retire removes artifacts a Service no longer renders, and stops and clears
+// whatever the runtime was still doing with them.
+func (m *Manager) retire(stale []ManagedArtifact) error {
+	labels, grouped := byLabel(stale)
+	for _, label := range labels {
+		if err := m.forgetLabel(label, grouped[label]); err != nil {
+			return fmt.Errorf("retiring %q: %w", label, err)
+		}
+	}
+	return nil
+}
+
+// forgetLabel deletes a label's artifacts and then has the runtime forget it.
+// The files go first, so a runtime that re-reads disk while forgetting does
+// not find them still there; a failed Forget puts them back, because they are
+// the only record that would let the next apply retry.
+func (m *Manager) forgetLabel(label string, arts []ManagedArtifact) error {
+	for _, a := range arts {
+		if err := os.Remove(a.Path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	if err := m.rt.Forget(context.Background(), label); err != nil {
+		restore(arts)
+		return err
+	}
+	return nil
 }
 
 // loadService releases any hold and has the runtime pick the Service up from

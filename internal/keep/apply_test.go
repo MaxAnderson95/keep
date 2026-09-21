@@ -1,6 +1,7 @@
 package keep
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -296,5 +297,84 @@ func TestApplyCreatesTheArtifactDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(artifactPath(t, m, &cfg.Services[0])); err != nil {
 		t.Fatalf("artifact not written: %v", err)
+	}
+}
+
+// A scheduled Service that becomes resident stops rendering its timer, but the
+// timer is still on disk, still enabled, and still starts the Service — even
+// after `keep down`. Nothing else reconciles it: the Service is still in the
+// Config, so it is not an orphan.
+func TestApplyRetiresArtifactsAServiceNoLongerRenders(t *testing.T) {
+	cfg := mustParse(t, oneResident(t))
+	rt := newTestRuntime(t)
+	rt.perUnit = 2 // the Service's old shape needed two files
+	m := testManager(t, cfg, rt)
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(rt.dir, "keep.web.timer")
+	if _, err := os.Stat(stale); err != nil {
+		t.Fatalf("setup: the two-artifact shape should have written %s: %v", stale, err)
+	}
+
+	// The Service's shape changes: one artifact from here on.
+	rt.perUnit = 1
+
+	// diff has to say apply will delete it.
+	sp := planFor(t, m, "web")
+	if sp.Kind == ChangeNoop {
+		t.Error("a Service with a retired artifact is not a noop")
+	}
+	if !strings.Contains(sp.Reason, "keep.web.timer") {
+		t.Errorf("Reason = %q, should name the retired file", sp.Reason)
+	}
+
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("%s should have been retired", stale)
+	}
+	if !rt.didCall("forget keep.web") {
+		t.Errorf("the runtime should have been told to forget the retired unit: %v", rt.calls)
+	}
+	// The Service itself survives its own reshaping.
+	if _, err := os.Stat(artifactPath(t, m, &cfg.Services[0])); err != nil {
+		t.Errorf("the Service's current artifact should still be there: %v", err)
+	}
+}
+
+// Retiring uses Forget, which clears a label's persistent records — including,
+// on some runtimes, the hold. A Service the user Down'd must not come back
+// just because its shape changed.
+func TestApplyRetireKeepsAHold(t *testing.T) {
+	cfg := mustParse(t, oneResident(t))
+	rt := newTestRuntime(t)
+	rt.perUnit = 2
+	m := testManager(t, cfg, rt)
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Down(context.Background(), &cfg.Services[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	rt.perUnit = 1
+	if _, err := m.Apply(); err != nil {
+		t.Fatal(err)
+	}
+
+	held, err := rt.Held()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !held["keep.web"] {
+		t.Error("apply lost the hold while retiring a stale artifact")
+	}
+	if _, ok := rt.units["keep.web"]; ok {
+		t.Error("a held Service must not be running after apply")
+	}
+	if _, err := os.Stat(filepath.Join(rt.dir, "keep.web.timer")); !os.IsNotExist(err) {
+		t.Error("the stale artifact should be retired even for a held Service")
 	}
 }

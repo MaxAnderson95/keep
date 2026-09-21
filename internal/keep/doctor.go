@@ -30,19 +30,27 @@ type Finding struct {
 // Doctor runs every read-only check across managed Services. It never mutates
 // state (D13). The returned findings are empty when everything is healthy.
 func (m *Manager) Doctor() ([]Finding, error) {
-	var findings []Finding
+	// Whatever is wrong with the runtime environment itself explains every
+	// per-Service symptom below it, so it is diagnosed first — and before any
+	// query that needs the runtime to answer. A doctor that failed with a raw
+	// "cannot reach the service manager" error would withhold the one finding
+	// that says how to fix exactly that.
+	findings := m.runtimeFindings()
+
 	managed, err := m.ScanManaged()
 	if err != nil {
-		return nil, err
+		return findings, err
 	}
 	held, err := m.rt.Held()
 	if err != nil {
-		return nil, err
+		if len(findings) > 0 {
+			// The adapter already explained why the runtime is unusable, with
+			// a fix. That diagnosis is the answer; the error underneath it is
+			// the symptom.
+			return findings, nil
+		}
+		return findings, err
 	}
-
-	// Whatever is wrong with the runtime environment itself explains every
-	// per-Service symptom below it, so it goes first.
-	findings = append(findings, m.runtimeFindings()...)
 
 	for i := range m.Cfg.Services {
 		s := &m.Cfg.Services[i]

@@ -24,6 +24,7 @@ type fakeRuntime struct {
 	held    map[string]bool         // label -> persistently held
 	units   map[string]runtime.Info // label -> live state (present == tracked)
 	fail    map[string]error        // operation string -> injected failure
+	heldErr error                   // injected failure for Held
 	nextPID int
 	calls   []string // ordered call log for assertions
 }
@@ -184,6 +185,9 @@ func (f *fakeRuntime) Info(t runtime.Target) (runtime.Info, error) {
 }
 
 func (f *fakeRuntime) Held() (map[string]bool, error) {
+	if f.heldErr != nil {
+		return nil, f.heldErr
+	}
 	out := map[string]bool{}
 	for k, v := range f.held {
 		if v {
@@ -203,6 +207,16 @@ func (f *fakeRuntime) didCall(substr string) bool {
 	}
 	return false
 }
+
+// diagnosingRuntime is a fake that also implements runtime.Diagnoser, the way
+// the systemd adapter does. The plain fakeRuntime deliberately does not, so
+// both sides of doctor's optional-capability check are exercised.
+type diagnosingRuntime struct {
+	*fakeRuntime
+	diags []runtime.Diagnosis
+}
+
+func (d diagnosingRuntime) Diagnose() []runtime.Diagnosis { return d.diags }
 
 // running marks a label as live without going through Load, for tests that
 // need a specific PID or a state keep itself would not produce.

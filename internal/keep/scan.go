@@ -3,6 +3,8 @@ package keep
 import (
 	"os"
 	"path/filepath"
+
+	"github.com/MaxAnderson95/keep/internal/runtime"
 )
 
 // ManagedArtifact is a generated file on disk that carries keep's marker.
@@ -57,6 +59,40 @@ func (m *Manager) ScanManaged() ([]ManagedArtifact, error) {
 	return found, nil
 }
 
+// staleArtifacts returns managed artifacts that belong to a Service but that
+// the Service's current shape no longer renders: the leftover `.timer` of a
+// scheduled Service that became resident, or an artifact under a label the
+// Config has since renamed. They are not orphans — the Service is still
+// declared — and nothing else would ever remove them.
+func staleArtifacts(managed []ManagedArtifact, name string, desired []runtime.Artifact) []ManagedArtifact {
+	wanted := make(map[string]bool, len(desired))
+	for _, a := range desired {
+		wanted[a.Path] = true
+	}
+	var out []ManagedArtifact
+	for _, a := range managed {
+		if a.Service == name && !wanted[a.Path] {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// byLabel groups artifacts by the label whose unit they belong to, preserving
+// first-seen order. A runtime that emits several files per Service retires
+// them as a group.
+func byLabel(arts []ManagedArtifact) ([]string, map[string][]ManagedArtifact) {
+	grouped := map[string][]ManagedArtifact{}
+	var order []string
+	for _, a := range arts {
+		if _, seen := grouped[a.Label]; !seen {
+			order = append(order, a.Label)
+		}
+		grouped[a.Label] = append(grouped[a.Label], a)
+	}
+	return order, grouped
+}
+
 // orphans returns managed artifacts whose service is no longer in the Config.
 func (m *Manager) orphans(managed []ManagedArtifact) []ManagedArtifact {
 	var out []ManagedArtifact
@@ -69,15 +105,7 @@ func (m *Manager) orphans(managed []ManagedArtifact) []ManagedArtifact {
 }
 
 // orphanLabels returns each orphaned label once, with the artifacts that carry
-// it. A runtime that emits several files per Service orphans them as a group.
+// it.
 func (m *Manager) orphanLabels(managed []ManagedArtifact) ([]string, map[string][]ManagedArtifact) {
-	byLabel := map[string][]ManagedArtifact{}
-	var order []string
-	for _, a := range m.orphans(managed) {
-		if _, seen := byLabel[a.Label]; !seen {
-			order = append(order, a.Label)
-		}
-		byLabel[a.Label] = append(byLabel[a.Label], a)
-	}
-	return order, byLabel
+	return byLabel(m.orphans(managed))
 }

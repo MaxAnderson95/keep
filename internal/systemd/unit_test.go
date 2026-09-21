@@ -218,3 +218,56 @@ func TestReadMarkersRejectsForeignFiles(t *testing.T) {
 		t.Error("the marker only counts inside the [X-Keep] section")
 	}
 }
+
+// systemd substitutes $VAR and ${VAR} from the manager's environment even
+// inside quotes, so a Config path containing a literal dollar would become a
+// different path (or an empty one) before keep fork ever saw it.
+func TestExecLineEscapesDollars(t *testing.T) {
+	cases := []struct {
+		in   []string
+		want string
+	}{
+		{[]string{"/opt/keep", "--config", "/home/m/${PROFILE}.yaml"}, `/opt/keep --config /home/m/$${PROFILE}.yaml`},
+		{[]string{"/opt/keep", "--config", "/home/m/$HOME.yaml"}, `/opt/keep --config /home/m/$$HOME.yaml`},
+		{[]string{"/opt/keep", "--config", "/home/m/my $dir/k.yaml"}, `/opt/keep --config "/home/m/my $$dir/k.yaml"`},
+	}
+	for _, tc := range cases {
+		if got := execLine(tc.in); got != tc.want {
+			t.Errorf("execLine(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// systemd resolves % specifiers in directive values, and an unknown one makes
+// it drop the whole directive — which would silently send a Service's output
+// to journald, where `keep logs` never looks.
+func TestLogPathsEscapePercentSpecifiers(t *testing.T) {
+	j := residentJob()
+	j.StandardOutPath = "/home/m/logs/%n/web.out.log"
+	j.StandardErrorPath = "/home/m/logs/100%/web.err.log"
+	j.Service = "we%b"
+	out := string((&Runtime{artifactDir: "/units"}).Render(j)[0].Data)
+
+	for _, want := range []string{
+		"StandardOutput=append:/home/m/logs/%%n/web.out.log",
+		"StandardError=append:/home/m/logs/100%%/web.err.log",
+		"Description=keep service we%%b",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// keep reads its own markers back and compares the pinned path against the
+// running binary, so those values must stay literal. systemd ignores the
+// whole X- section, so there is nothing to escape them for.
+func TestMarkerValuesAreNotEscaped(t *testing.T) {
+	j := residentJob()
+	j.KeepPath = "/opt/100%/keep"
+	r := &Runtime{artifactDir: "/units"}
+	art := r.Render(j)[0]
+	if got := r.ReadMarkers(art.Path, art.Data).KeepPath; got != j.KeepPath {
+		t.Errorf("KeepPath round-tripped as %q, want %q", got, j.KeepPath)
+	}
+}

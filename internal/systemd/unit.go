@@ -56,7 +56,7 @@ func (r *Runtime) Render(j runtime.Job) []runtime.Artifact {
 func renderService(j runtime.Job) []byte {
 	var b strings.Builder
 	b.WriteString("[Unit]\n")
-	fmt.Fprintf(&b, "Description=keep service %s\n", j.Service)
+	fmt.Fprintf(&b, "Description=keep service %s\n", specifierSafe(j.Service))
 	if !scheduled(j) {
 		// Paired with Restart=always below: never stop retrying a resident
 		// Service, which is what launchd's KeepAlive does. Without this,
@@ -79,10 +79,10 @@ func renderService(j runtime.Job) []byte {
 		b.WriteString("RestartSec=10\n")
 	}
 	if j.StandardOutPath != "" {
-		fmt.Fprintf(&b, "StandardOutput=append:%s\n", j.StandardOutPath)
+		fmt.Fprintf(&b, "StandardOutput=append:%s\n", specifierSafe(j.StandardOutPath))
 	}
 	if j.StandardErrorPath != "" {
-		fmt.Fprintf(&b, "StandardError=append:%s\n", j.StandardErrorPath)
+		fmt.Fprintf(&b, "StandardError=append:%s\n", specifierSafe(j.StandardErrorPath))
 	}
 
 	// A scheduled Service is started by its timer, so only a resident one is
@@ -99,7 +99,7 @@ func renderService(j runtime.Job) []byte {
 func renderTimer(j runtime.Job) []byte {
 	var b strings.Builder
 	b.WriteString("[Unit]\n")
-	fmt.Fprintf(&b, "Description=keep timer %s\n", j.Service)
+	fmt.Fprintf(&b, "Description=keep timer %s\n", specifierSafe(j.Service))
 
 	b.WriteString("\n[Timer]\n")
 	for _, ci := range j.StartCalendar {
@@ -167,9 +167,10 @@ func calField(v *int) string {
 	return fmt.Sprintf("%02d", *v)
 }
 
-// execLine renders argv as a systemd ExecStart value. systemd splits on
-// whitespace and expands `%` specifiers, so anything with whitespace is quoted
-// and every literal `%` is doubled.
+// execLine renders argv as a systemd ExecStart value. systemd splits the value
+// on whitespace, expands `%` specifiers, and substitutes `$VAR` and `${VAR}`
+// from the manager's environment — the last two even inside quotes — so
+// anything with whitespace is quoted and every literal `%` and `$` is doubled.
 func execLine(argv []string) string {
 	quoted := make([]string, 0, len(argv))
 	for _, a := range argv {
@@ -178,10 +179,24 @@ func execLine(argv []string) string {
 	return strings.Join(quoted, " ")
 }
 
+// execArgEscapes doubles what systemd would otherwise interpret and
+// backslash-escapes what would otherwise end the argument. One Replacer, so
+// each character is considered once and an escape cannot be re-escaped.
+var execArgEscapes = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "%", "%%", "$", "$$")
+
 func execArg(a string) string {
-	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "%", "%%").Replace(a)
+	escaped := execArgEscapes.Replace(a)
 	if a == "" || strings.ContainsAny(a, " \t'\"\\") {
 		return `"` + escaped + `"`
 	}
 	return escaped
+}
+
+// specifierSafe protects a literal value in a unit directive. systemd resolves
+// `%` specifiers in most settings, including the paths in
+// `StandardOutput=append:`, where an unknown specifier makes it drop the
+// directive entirely and fall back to journald — which would send a Service's
+// output somewhere `keep logs` never looks.
+func specifierSafe(v string) string {
+	return strings.ReplaceAll(v, "%", "%%")
 }

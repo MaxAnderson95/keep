@@ -101,6 +101,20 @@ func (m *Manager) ComputePlan() (Plan, error) {
 			sp.Kind = ChangeNoop
 		}
 
+		// Artifacts the Service's old shape left behind are apply's to delete,
+		// so diff has to say so.
+		if stale := staleArtifacts(managed, s.Name, desired); len(stale) > 0 {
+			names := make([]string, 0, len(stale))
+			for _, a := range stale {
+				names = append(names, filepath.Base(a.Path))
+			}
+			if sp.Kind == ChangeNoop {
+				sp.Kind = ChangeUpdate
+			}
+			sp.Reason = appendReason(sp.Reason, "retires artifacts this Service no longer uses: "+
+				strings.Join(names, ", "))
+		}
+
 		isHeld := held[label]
 		switch {
 		case !s.IsEnabled():
