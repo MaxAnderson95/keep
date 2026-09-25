@@ -30,7 +30,7 @@ jobs:
       - name: Install Vite+
         env:
           VP_VERSION: 0.1.24
-          VP_INSTALLER_SHA256: 6ed2d2847e5b7f3d67b6f91f2d28200bdffcffcd91ef2a336cf764d02776fcc3
+          VP_INSTALLER_SHA256: e79e48da3b2817c179f581c943e2e1ccf0c690d32d0ed11b8cbfbebd7196918f
         run: |
           curl -fsSL https://vite.plus -o /tmp/vp-install.sh
           echo "${VP_INSTALLER_SHA256}  /tmp/vp-install.sh" | sha256sum -c -
